@@ -158,7 +158,7 @@ if(NtMapViewOfSection(
 
 
 void rellocate(void* remoteImageBase,void* heapBase,IMAGE_SECTION_HEADER *sec){
-    void* relocBlockHeapVIew=heapBase+(unsigned int)(sec->PointerToRawData);
+    BYTE* relocBlockHeapVIew=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
     unsigned int secSz=sec->SizeOfRawData;
 
     for(int i=0;i<secSz;i++){
@@ -169,15 +169,18 @@ void rellocate(void* remoteImageBase,void* heapBase,IMAGE_SECTION_HEADER *sec){
         void* page=remoteImageBase+pageRva;
         unsigned int entriesCount=(blockSz-sizeof(unsigned int)*2)/2;
 
-        BYTE* entry=(BYTE*)((BYTE*)block+8);
+        WORD* entry=(WORD*)((BYTE*)block+8);
         for(unsigned int j=0;j<entriesCount;j++){
-            // separate type and offset
-            // check type
-            // adjust address
-
-            
+            BYTE relocType=*entry>>12;
+            WORD offset=*entry & 0x0FFF;
+            if(relocType==3 || relocType==10){
+                void* shesasworebeli=(BYTE*)+offset;
+                *shesasworebeli=
+            }
             entry+=2;
         }
+
+        relocBlockHeapVIew+=blockSz;
     }
 
 
