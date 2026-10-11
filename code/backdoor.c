@@ -157,7 +157,7 @@ if(NtMapViewOfSection(
 }
 
 
-void rellocate(void* remoteImageBase,void* heapBase,IMAGE_SECTION_HEADER *sec){
+void rellocate(void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     BYTE* relocBlockHeapVIew=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
     unsigned int secSz=sec->SizeOfRawData;
 
@@ -174,8 +174,18 @@ void rellocate(void* remoteImageBase,void* heapBase,IMAGE_SECTION_HEADER *sec){
             BYTE relocType=*entry>>12;
             WORD offset=*entry & 0x0FFF;
             if(relocType==3 || relocType==10){
-                void* shesasworebeli=(BYTE*)+offset;
-                *shesasworebeli=
+                void* shesasworebeli=(BYTE*)page+offset;
+                
+                if((unsigned long long)remoteImageBase>(unsigned long long)preferedBase)
+                {
+                    unsigned long long corrected=((unsigned long long)remoteImageBase-(unsigned long long)preferedBase)+((unsigned long long)*shesasworebeli-(unsigned long long)preferedBase);
+                    *shesasworebeli=corrected;
+                }
+                else
+                {
+                    unsigned long long corrected=((unsigned long long)*shesasworebeli-(unsigned long long)preferedBase)-((unsigned long long)remoteImageBase-(unsigned long long)preferedBase);
+                    *shesasworebeli=corrected;
+                }
             }
             entry+=2;
         }
@@ -269,7 +279,8 @@ if(written!=(unsigned long)secSz){
 }
 sec++;
 }
-rellocate(remoteV,mm.heapBase,reloc);
+if(mm.preferedBase!=(unsigned long long)remoteV)
+    rellocate(remoteV,mm.heapBase,mm.preferedBase,reloc);
 
 }
 
