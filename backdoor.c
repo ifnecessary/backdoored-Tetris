@@ -175,7 +175,9 @@ void rellocate(void* remoteImageBase,void* heapBase,IMAGE_SECTION_HEADER *sec){
             // check type
             // adjust address
 
-
+            if(false){
+                int z=5;
+            }
             entry+=2;
         }
     }
