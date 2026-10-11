@@ -126,6 +126,21 @@ typedef enum _PROCESSINFOCLASS
 } PROCESSINFOCLASS;
 
 
+typedef struct _OBJECT_ATTRIBUTES
+{
+    ULONG Length;                                                           //0x0
+    VOID* RootDirectory;                                                    //0x8
+    struct _UNICODE_STRING* ObjectName;                                     //0x10
+    ULONG Attributes;                                                       //0x18
+    VOID* SecurityDescriptor;                                               //0x20
+    VOID* SecurityQualityOfService;                                         //0x28
+} OBJECT_ATTRIBUTES,*POBJECT_ATTRIBUTES; 
+
+typedef enum _SECTION_INHERIT {
+    ViewShare=1,
+    ViewUnmap=2
+} SECTION_INHERIT, *PSECTION_INHERIT;
+
 
 typedef struct _PROCESS_BASIC_INFORMATION
 {
@@ -169,29 +184,29 @@ typedef NTSTATUS (NTAPI *T_NtMapViewOfSection)(
   IN ULONG                CommitSize,
   IN OUT PLARGE_INTEGER   SectionOffset OPTIONAL,
   IN OUT PULONG           ViewSize,
-  IN                      InheritDisposition,
+  IN SECTION_INHERIT      InheritDisposition,
   IN ULONG                AllocationType OPTIONAL,
   IN ULONG                Protect );
 
 
-typedef struct _IMAGE_SECTION_HEADER {
-  BYTE  Name[8];                    // 8 bytes
-  union {
-    DWORD PhysicalAddress;
-    DWORD VirtualSize;
-  } Misc;                           // 4 bytes
-  unsigned int VirtualAddress;             // 4 bytes
-  unsigned int SizeOfRawData;              // 4 bytes
-  unsigned int PointerToRawData;           // 4 bytes
-  unsigned int PointerToRelocations;       // 4 bytes
-  unsigned int  PointerToLinenumbers;       // 4 bytes
-  unsigned short  NumberOfRelocations;        // 2 bytes
-  unsigned short  NumberOfLinenumbers;        // 2 bytes
-  unsigned int Characteristics;            // 4 bytes
-} IMAGE_SECTION_HEADER;
+// typedef struct _IMAGE_SECTION_HEADER {
+//   BYTE  Name[8];                    // 8 bytes
+//   union {
+//     DWORD PhysicalAddress;
+//     DWORD VirtualSize;
+//   } Misc;                           // 4 bytes
+//   unsigned int VirtualAddress;             // 4 bytes
+//   unsigned int SizeOfRawData;              // 4 bytes
+//   unsigned int PointerToRawData;           // 4 bytes
+//   unsigned int PointerToRelocations;       // 4 bytes
+//   unsigned int  PointerToLinenumbers;       // 4 bytes
+//   unsigned short  NumberOfRelocations;        // 2 bytes
+//   unsigned short  NumberOfLinenumbers;        // 2 bytes
+//   unsigned int Characteristics;            // 4 bytes
+// } IMAGE_SECTION_HEADER;
 
 
-typedef struct _IMAGE_BASE_RELOCATION {
-    unsigned int  VirtualAddress; 
-    unsigned int SizeOfBlock;    
-} IMAGE_BASE_RELOCATION, *PIMAGE_BASE_RELOCATION;
+// typedef struct _IMAGE_BASE_RELOCATION {
+//     unsigned int  VirtualAddress; 
+//     unsigned int SizeOfBlock;    
+// } IMAGE_BASE_RELOCATION, *PIMAGE_BASE_RELOCATION;

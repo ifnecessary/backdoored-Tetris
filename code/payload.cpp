@@ -2,7 +2,10 @@
 #include <vector>
 
 // running within svchost.exe
-int main(){
+void test(){
 
+}
+int main(){
+    test();
     return 0;
 }
