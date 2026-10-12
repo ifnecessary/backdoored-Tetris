@@ -6,18 +6,8 @@
 #include <string.h>
 #include <time.h>
 #include <windows.h>
+
 #include "tetris.h"
-
-
-
-int main(){
-    initializeTetrix();
-    WaitForSingleObject(
-        CreateThread(NULL,0,(LPTHREAD_START_ROUTINE)&tetrix,NULL,0,NULL),
-        INFINITE
-    );
-    return 0;
-}
 
 const int tetrominoes[7][16] = {
     {0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0},  // I
@@ -38,17 +28,17 @@ int currRotation = 0;
 int currX = A_WIDTH / 2;
 int currY = 0;
 
-void tetrix() {
-    printf("\e[2J\e[H");  // clear screen
+int main() {
+    printf("\e[2J\e[H");  // clear screen & reset cursor position
     memset(arena, 0, sizeof(arena[0][0]) * A_HEIGHT * A_WIDTH);
     newTetromino();
 
-    const int targetFrameTime = 500;
+    const int targetFrameTime = 350;
     clock_t lastTime = clock();
 
     while (!gameOver) {
         clock_t now = clock();
-        clock_t elapsed = getMs(now, lastTime);
+        clock_t elapsed = (now - lastTime) * 1000 / CLOCKS_PER_SEC;
         processInputs();
 
         if (elapsed >= targetFrameTime) {
@@ -64,66 +54,9 @@ void tetrix() {
         Sleep(10);
     }
 
-    printf("\e[2J\e[H");  // clear screen
-    printf("\e[6;37m");   // set style
-    printf("GAME OVER\nScore: %d\n", score);
-    printf("\e[0m");  // reset style
-}
-
-clock_t getMs(clock_t start, clock_t end) {
-    return (start - end) * 1000 / CLOCKS_PER_SEC;
-}
-
-BufferBuilder *bbCreate(size_t initialSize) {
-    BufferBuilder *bb = malloc(sizeof(BufferBuilder));
-    if (!bb) {
-        return NULL;
-    }
-
-    bb->buffer = malloc(initialSize);
-    if (!bb->buffer) {
-        free(bb);
-        return NULL;
-    }
-
-    bb->buffer[0] = '\0';
-    bb->buffLen = initialSize;
-    bb->byteLen = 0;
-    return bb;
-}
-
-int bbAppend(BufferBuilder *bb, const char *str) {
-    if (!bb || !str) {
-        return -1;
-    }
-
-    size_t strByteLen = strlen(str);
-    if (bb->byteLen + strByteLen + 1 > bb->buffLen) {
-        size_t newSize = bb->buffLen;
-        while (bb->byteLen + strByteLen + 1 > newSize) {
-            newSize *= 2;
-        }
-
-        char *newBuffer = realloc(bb->buffer, newSize);
-        if (!newBuffer) {
-            return -1;
-        }
-
-        bb->buffer = newBuffer;
-        bb->buffLen = newSize;
-    }
-
-    strcat(bb->buffer, str);
-    bb->byteLen += strByteLen;
+    printf("\e[2J\e[H");  // clear screen & reset cursor position
+    printf("Game over!\nScore: %d\n", score);
     return 0;
-}
-
-void bbFree(BufferBuilder *bb) {
-    if (!bb) {
-        return;
-    }
-    free(bb->buffer);
-    free(bb);
 }
 
 void newTetromino() {
@@ -267,24 +200,13 @@ void checkLines() {
 }
 
 void drawArena() {
-    printf("\e[?25l");   // hide cursor
-    printf("\e[H");      // reset cursor position
-    printf("\e[0m");     // reset style
-    printf("\e[2;37m");  // set style
+    printf("\e[?25l\e[H");  // hide cursor & reset cursor position
 
-    BufferBuilder *bb = bbCreate(512);
-    if (!bb) {
-        return;
-    }
-
-    bbAppend(bb, "\xda");
-    for (int x = 0; x < (A_WIDTH * 2); x++) {
-        bbAppend(bb, "\xc4");
-    }
-    bbAppend(bb, "\xbf\n");
+    char buffer[512];
+    int bufferIndex = 0;
 
     for (int y = 0; y < A_HEIGHT; y++) {
-        bbAppend(bb, "\xb3");
+        buffer[bufferIndex++] = '|';
 
         for (int x = 0; x < A_WIDTH; x++) {
             int rotatedPos = rotate(x - currX, y - currY, currRotation);
@@ -292,34 +214,17 @@ void drawArena() {
             bool validY = y >= currY && y < currY + T_HEIGHT;
             bool xyFilled = 1 == tetrominoes[currTetrominoIdx][rotatedPos];
 
-            if (1 == arena[y][x]) {
-                bbAppend(bb, "\e[0;37m");
-                bbAppend(bb, "\xdb\xdb");
-                bbAppend(bb, "\e[2;37m");
-            } else if (validX && validY && xyFilled) {
-                bbAppend(bb, "\e[0;37m");
-                bbAppend(bb, "\xdb\xdb");
-                bbAppend(bb, "\e[2;37m");
+            if (1 == arena[y][x] || (validX && validY && xyFilled)) {
+                buffer[bufferIndex++] = '#';
             } else {
-                bbAppend(bb, ". ");
+                buffer[bufferIndex++] = ' ';
             }
         }
 
-        bbAppend(bb, "\xb3");
-        bbAppend(bb, "\n");
+        buffer[bufferIndex++] = '|';
+        buffer[bufferIndex++] = '\n';
     }
 
-    bbAppend(bb, "\xc0");
-    for (int x = 0; x < (A_WIDTH * 2); x++) {
-        bbAppend(bb, "\xc4");
-    }
-    bbAppend(bb, "\xd9\n");
-
-    printf("%s", bb->buffer);
-
-    printf("\e[0m");  // reset style
-    printf("\e[1m");  // set style
-    printf("\n\nScore: %d\n\n", score);
-
-    bbFree(bb);
+    buffer[bufferIndex] = '\0';
+    printf("%s\n\nScore: %d\n\n", buffer, score);
 }
