@@ -340,6 +340,8 @@ if(!WriteProcessMemory(
 }
 
 
+// THINK ABOUT THREAD CRETion steps.
+
 // uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
 // printf("ENTRY POINT: %llu\n",entryPont);
 // CONTEXT thContext;
@@ -349,6 +351,7 @@ if(!WriteProcessMemory(
 // thContext.Rip=(DWORD64)entryPont;
 // if(!SetThreadContext(thread,&thContext))
 //     printf("[-] 293!\n");
+
 
 if(ResumeThread(thread)!=-1){
     printf("main thread started!\n");
