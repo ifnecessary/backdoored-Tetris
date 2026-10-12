@@ -189,30 +189,50 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
     }
     sec++;
     }
+    printf("all sections has been mapped!\n");
 }
 
 
 // BUG IS WITHIN rellocate() SOMEWHERE
 
 void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
-    BYTE* relocBlockHeapVIew=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
+    printf("RELLOC STARTED\n");
+    // reloction block in heap (first el in list)
+    BYTE* block=(BYTE*)(heapBase+(unsigned int)(sec->PointerToRawData));
+    
     unsigned int secSz=sec->SizeOfRawData;
+
     long long delta=(unsigned long long)remoteImageBase-(unsigned long long)preferedBase;
+
+    
+    // must correct loop
+    // write payload.cpp 
+    // 
+    // wrong way to loop. i am looping over bytes not size of list of reloc blocks.
+    
+
     for(int i=0;i<secSz;i++){
-        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)relocBlockHeapVIew;
+        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)block;
         unsigned int blockSz=block->SizeOfBlock;
-        // rva to image base
         unsigned int pageRva=block->VirtualAddress;
-        uintptr_t page=(uintptr_t)(remoteImageBase+pageRva);
+        
+        // this block works on given page
+        uintptr_t page=(uintptr_t)((unsigned long long)remoteImageBase+pageRva);
+        
+        printf("relocation process for page: %llu\n",page);
+        
         unsigned int entriesCount=(blockSz-sizeof(unsigned int)*2)/2;
 
         WORD* entry=(WORD*)((BYTE*)block+8);
+
         for(unsigned int j=0;j<entriesCount;j++){
+            
             BYTE relocType=*entry>>12;
             WORD offset=*entry & 0x0FFF;
             if(relocType==3 || relocType==10){
                 uintptr_t absolute=page+offset;
                 uintptr_t relocated=(uintptr_t)((absolute-(uintptr_t)preferedBase)+delta);
+                printf("before relocation: %llu ---- after relocation: %llu\n",absolute,relocated);
                 if(!WriteProcessMemory(
                     proc,
                     (void*)absolute,
@@ -227,9 +247,9 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
             entry+=2;
         }
 
-        relocBlockHeapVIew+=blockSz;
+        block+=blockSz;
     }
-
+    printf("relocated successfuly!\n");
 }
 
 bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){

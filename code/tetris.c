@@ -6,7 +6,8 @@
 #include <string.h>
 #include <time.h>
 #include <windows.h>
-#include "backdoor.c"
+#include "tetris.h"
+
 
 
 int main(){
