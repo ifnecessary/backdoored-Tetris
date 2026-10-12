@@ -195,6 +195,19 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
 
 // BUG IS WITHIN rellocate() SOMEWHERE
 
+int dumpRelocBlockCount(unsigned int sectionSize,void* section){
+    int count=0;
+    unsigned int parsedBytes=0;
+    while(parsedBytes<=sectionSize){
+        IMAGE_BASE_RELOCATION* sec=(IMAGE_BASE_RELOCATION*)section;
+        unsigned int blockSz=(unsigned int)(sec->SizeOfBlock);
+        parsedBytes+=blockSz;
+        count++;
+    }
+
+    return count;
+}
+
 void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     printf("RELLOC STARTED\n");
     // reloction block in heap (first el in list)
@@ -210,8 +223,10 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
     // 
     // wrong way to loop. i am looping over bytes not size of list of reloc blocks.
     
-
-    for(int i=0;i<secSz;i++){
+    int blockCount=dumpRelocBlockCount(secSz,block);
+    printf("reloction block count: %i\n",blockCount);
+    
+    for(int i=0;i<blockCount;i++){
         IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)block;
         unsigned int blockSz=block->SizeOfBlock;
         unsigned int pageRva=block->VirtualAddress;
@@ -310,11 +325,13 @@ if(WriteProcessMemory(
 };
 
 IMAGE_SECTION_HEADER *reloc=NULL;
-mapRoutineX(proc,remoteV,mm,&reloc); // or mapRoutineY();
+if(!KERNEL_STYLE)
+    mapRoutineX(proc,remoteV,mm,&reloc); // ELSE mapRoutineY();
 
-if(mm.preferedBase!=(unsigned long long)remoteV)
+if(mm.preferedBase!=(unsigned long long)remoteV){
+
     rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
-
+}
 
 uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
 printf("ENTRY POINT: %llu\n",entryPont);
