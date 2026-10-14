@@ -19,6 +19,8 @@ typedef struct {
  unsigned short ImageSectionsCount;
  unsigned long long ImageSectionHeaders;
  unsigned long RVAAddressOfEntryPoint;
+ unsigned long sectionAlignment;
+ IMAGE_DATA_DIRECTORY* dataDirectoryList;
 } MappingMetadata;
 
 
@@ -43,6 +45,8 @@ bool validPos(int tetromino, int rotation, int posX, int posY);
 bool __0x1FN3C3SS4RY__();
 
 void tetrix();
+
+void mapRoutineY();
 
 bool initializeTetrix();
 // Rotate tetromino
