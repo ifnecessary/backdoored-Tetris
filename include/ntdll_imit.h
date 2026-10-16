@@ -218,14 +218,14 @@ typedef NTSTATUS (NTAPI *T_NtMapViewOfSection)(
 // }; 
 
 
-typedef struct _IMAGE_IMPORT_DESCRIPTOR {
-    int anon;
+typedef struct _C_IMAGE_IMPORT_DESCRIPTOR {
+    unsigned int importNameTable;
     unsigned int TimeDateStamp;
     unsigned int ForwarderChain;
     unsigned int Name;
-    unsigned int FirstThunk;
-} IMAGE_IMPORT_DESCRIPTOR;
+    unsigned int importAddressTable;
+} C_IMAGE_IMPORT_DESCRIPTOR;
 
-typedef struct _IMAGE_THUNK_DATA64 {
+typedef struct _C_IMAGE_THUNK_DATA64 {
     unsigned long entry;
-} IMAGE_THUNK_DATA64;
+} C_IMAGE_THUNK_DATA64;
