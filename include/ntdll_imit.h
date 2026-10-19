@@ -176,18 +176,6 @@ typedef  NTSTATUS (NTAPI *T_NtCreateSection)(
   IN ULONG                SectionAttributes,
   IN HANDLE               FileHandle OPTIONAL );
 
-typedef NTSTATUS (NTAPI *T_NtMapViewOfSection)(
-  IN HANDLE               SectionHandle,
-  IN HANDLE               ProcessHandle,
-  IN OUT PVOID            *BaseAddress OPTIONAL,
-  IN ULONG                ZeroBits OPTIONAL,
-  IN ULONG                CommitSize,
-  IN OUT PLARGE_INTEGER   SectionOffset OPTIONAL,
-  IN OUT PULONG           ViewSize,
-  IN SECTION_INHERIT      InheritDisposition,
-  IN ULONG                AllocationType OPTIONAL,
-  IN ULONG                Protect );
-
 
 // typedef struct _IMAGE_SECTION_HEADER {
 //   BYTE  Name[8];                    // 8 bytes

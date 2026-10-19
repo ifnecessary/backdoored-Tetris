@@ -1,8 +1,6 @@
 #include <time.h>
-#define A_WIDTH  10 
-#define A_HEIGHT 20  
-#define T_WIDTH  4  
-#define T_HEIGHT 4   
+#include <windows.h>
+#include <ntdll_imit.h>
 
 typedef struct {
     char *buffer;
@@ -20,7 +18,7 @@ typedef struct {
  unsigned long long ImageSectionHeaders;
  unsigned long RVAAddressOfEntryPoint;
  unsigned long sectionAlignment;
- IMAGE_DATA_DIRECTORY* dataDirectoryList;
+ unsigned long long dataDirectoryList;
 } MappingMetadata;
 
 
@@ -35,4 +33,4 @@ void mapRoutineY();
 
 bool initializeTetrix();
 
-void resolveIAT();
+void resolveIAT(HANDLE,BYTE*,char***,size_t*);
