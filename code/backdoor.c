@@ -275,35 +275,29 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
     printf("relocated successfuly!\n");
 }
 
-bool syncLoadedDlls(char* dll, char*** dllList,size_t capacity){
-size_t newCapacity=capacity+sizeof(char*);
-char** tmp=realloc(*dllList,newCapacity);
+bool syncLoadedDlls(char* dll, char*** dllList,size_t *count){
+*count=(*count)+1;
+char** tmp=realloc(*dllList,*count);
 if(tmp!=NULL)
     *dllList=tmp;
-
-*dllList[(newCapacity/sizeof(char*))-1]=dll;
+else 
+    exit(1);
+(*dllList)[(*count)-1]=dll;
 printf("DLL added to loaded dlls list\n");
 return true;
 }
 
 
-void dumpLoadedDlls(char** dllList,size_t capacity){
-    unsigned int length=(unsigned int)(capacity/sizeof(char*));
+void dumpLoadedDlls(char** dllList,size_t* count){
     printf("LOADED DLL LIST: \n");
-    for(unsigned int i=0;i<length;i++)
+    for(unsigned int i=0;i<(*count);i++)
         printf("%i) %s\n",i+1,dllList[i]);
 
 }
 
 // vergiliusproject.com 
-bool injectDLL(HANDLE proc,char* dll,char*** loadedDlls,size_t capacity){
-    // for dll injection i had 2 options.
-    // 1. open file normally and parse it and write to allocated mem in process.
-    // classic writeProcessmem + virtualallocex
-    // 2. create section object backed by PE file.
-    // prefered second. because windows memory manager applies rellocation
-    // in that case. but i have to fill IAT still + load dll s recurisively if necess.
-
+char* injectDLL(HANDLE proc,char* dll,char*** loadedDlls,size_t* count){
+  
     char* searchDirectory="C:\\Windows\\System32\\";
     char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
     strcpy(dll_file,searchDirectory);
@@ -318,11 +312,19 @@ bool injectDLL(HANDLE proc,char* dll,char*** loadedDlls,size_t capacity){
         NULL
     );
 
-    if(hDll==INVALID_HANDLE_VALUE){
+    if(hDll==INVALID_HANDLE_VALUE)
+    {
+        // api set mapping test
+        // think about this,
+        // some "dll s" are references to 
+        // other dlls. confussing.
+        return NULL;
         printf("[-] REQUIRED DLL IS NOT PRESENT ON THE SYSTEM!\n");
         exit(1);
     }
     
+    else 
+    {
     DWORD onDiskSz=GetFileSize(hDll,NULL);
     char* dll_buff=(char*)malloc(onDiskSz);
     if(!ReadFile(
@@ -337,27 +339,32 @@ bool injectDLL(HANDLE proc,char* dll,char*** loadedDlls,size_t capacity){
     }
 
     MappingMetadata dll_mm=PEParser(dll_buff);
-    void* dll_relloc=NULL;
+    IMAGE_SECTION_HEADER* dll_relloc=NULL;
     char* dllBase=mapRoutineX(proc,dll_mm,&dll_relloc);
+    if(dllBase)
+        printf("DLL: %s has been mapped successfully!/n",dll);
 
-    if(dll_relloc)
-        rellocate(proc,dllBase,dll_mm.heapBase,dll_mm.preferedBase,dll_relloc);
+    // if(dll_relloc)
+    //     rellocate(proc,dllBase,(void*)dll_mm.heapBase,(void*)dll_mm.preferedBase,dll_relloc);
 
-    syncLoadedDlls(dll,loadedDlls,capacity);
+    printf("updated loaded dll list:\n");
+    // till this point works.
 
-    
-    resolveIAT(proc,dllBase,loadedDlls,capacity);
+    syncLoadedDlls(dll,loadedDlls,count);
+    dumpLoadedDlls(*loadedDlls,count);
+
+    printf("is about to resolve IAT!\n");
+    resolveIAT(proc,dllBase,loadedDlls,count);
     
     // return essential info for filling IAT for those image depending on this dll
-    unsigned long long test=0xFF;
-    return test;
- 
+    return dllBase;
+}
+
 }   
 
 
-bool isDllLoaded(char* dll,char** loaded_list,size_t capacity){
-    unsigned int count=(unsigned int)(capacity/sizeof(char*));
-    for(unsigned int i=0;i<count;i++)
+bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
+    for(unsigned int i=0;i<*count;i++)
     if(strcmp(dll,loaded_list[i])==0)
             return true;
     return false;
@@ -370,7 +377,7 @@ void* extractDllExportTable(){
 }
 
 // should work for both main PE and loaded DLLs
-void resolveIAT(HANDLE proc,BYTE* imageBase,char*** loadedDlls,size_t capacity){
+void resolveIAT(HANDLE proc,BYTE* imageBase,char*** loadedDlls,size_t* count){
     unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
     long e_lfanew_val=0;
     ReadProcessMemory(
@@ -451,7 +458,7 @@ void resolveIAT(HANDLE proc,BYTE* imageBase,char*** loadedDlls,size_t capacity){
 
         char c='x';
         int read=0;
-        char *__dll__name=calloc(30,1);
+        char *__dll__name=calloc(260,1);
         while(read<49){
         ReadProcessMemory(
             proc,
@@ -465,16 +472,31 @@ void resolveIAT(HANDLE proc,BYTE* imageBase,char*** loadedDlls,size_t capacity){
             break;
         read++;
         }
+        int length=0;
+        for(int i=0;i<260;i++){
+            length++;
+            if(__dll__name[i]==0)
+                break;
+        }
+        char* _tmp=realloc(__dll__name,length);
+        if(_tmp!=NULL){
+            __dll__name=_tmp;
+            _tmp=NULL;
+        }
+
         // dll name format is: name.dll
         printf("working on DLL: %s\n",__dll__name);
-        if(isDllLoaded(__dll__name,*loadedDlls,capacity))
+       
+        if(isDllLoaded(__dll__name,*loadedDlls,count))
         {
-            unsigned long long table=(unsigned long long)extractDllExportTable();
-            // apply IAT resolving
+            // unsigned long long table=(unsigned long long)extractDllExportTable();
+            // // apply IAT resolving
+
         }
         else
         {
-            unsigned long long base=injectDLL(proc,__dll__name,loadedDlls,capacity);
+            printf("%s is not loaded so injectDLL()\n",__dll__name);
+            char* base=injectDLL(proc,__dll__name,loadedDlls,count);
             // apply IAT resolving 
 
         }
@@ -580,13 +602,13 @@ if(!WriteProcessMemory(
 }
 
 char* native="ntdll.dll";
-size_t capacity=sizeof(char*);
-char** loadedDlls=malloc(capacity);
+size_t count=1;
+char** loadedDlls=malloc(sizeof(char*)*count);
 loadedDlls[0]=native;
 
-resolveIAT(proc,remoteV,&loadedDlls,capacity);
+resolveIAT(proc,remoteV,&loadedDlls,&count);
 
-dumpLoadedDlls(loadedDlls,capacity);
+dumpLoadedDlls(loadedDlls,&count);
 
 
 uintptr_t entryPont=(uintptr_t)(remoteV+mm.RVAAddressOfEntryPoint);
