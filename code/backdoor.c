@@ -306,14 +306,14 @@ bool injectDLL(HANDLE proc,char* dll,T_NtMapViewOfSection NtMapViewOfSection,cha
     NTSTATUS mappedSection=NtMapViewOfSection(
         sectionObjectHandle,
         proc,
-        dllBase,
+        &dllBase,
         0,
         0,
         NULL,
         &viewSz,
         ViewUnmap,
         0,
-        PAGE_READONLY
+        PAGE_EXECUTE_READ
     );
 
     if(mappedSection!=0x00000000){
