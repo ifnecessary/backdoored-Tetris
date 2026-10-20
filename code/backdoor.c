@@ -218,7 +218,7 @@ char* mapRoutineX(HANDLE proc,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
 }
 
 
-void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
+extern void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBase,IMAGE_SECTION_HEADER *sec){
     printf("RELLOC STARTED\n");
     // reloction block in heap (first el in list)
     BYTE* _block=(BYTE*)((BYTE*)heapBase+(unsigned int)(sec->PointerToRawData));
@@ -275,7 +275,7 @@ void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* preferedBa
     printf("relocated successfuly!\n");
 }
 
-bool syncLoadedDlls(char* dll, char*** dllList,size_t *count){
+extern bool syncLoadedDlls(char* dll, char*** dllList,size_t *count){
 *count=(*count)+1;
 char** tmp=realloc(*dllList,*count);
 if(tmp!=NULL)
@@ -288,82 +288,15 @@ return true;
 }
 
 
-void dumpLoadedDlls(char** dllList,size_t* count){
+extern void dumpLoadedDlls(char** dllList,size_t* count){
     printf("LOADED DLL LIST: \n");
     for(unsigned int i=0;i<(*count);i++)
         printf("%i) %s\n",i+1,dllList[i]);
 
 }
 
-// vergiliusproject.com 
-char* injectDLL(HANDLE proc,char* dll,char*** loadedDlls,size_t* count){
-  
-    char* searchDirectory="C:\\Windows\\System32\\";
-    char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
-    strcpy(dll_file,searchDirectory);
-    strcat(dll_file,dll);
-    HANDLE hDll=CreateFileA(
-        dll_file,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        NULL,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
 
-    if(hDll==INVALID_HANDLE_VALUE)
-    {
-        // api set mapping test
-        // think about this,
-        // some "dll s" are references to 
-        // other dlls. confussing.
-        return NULL;
-        printf("[-] REQUIRED DLL IS NOT PRESENT ON THE SYSTEM!\n");
-        exit(1);
-    }
-    
-    else 
-    {
-    DWORD onDiskSz=GetFileSize(hDll,NULL);
-    char* dll_buff=(char*)malloc(onDiskSz);
-    if(!ReadFile(
-        hDll,
-        dll_buff,
-        onDiskSz,
-        NULL,
-        NULL
-    )){
-        printf("[-] 337 failed to read dll file\n");
-        exit(1);
-    }
-
-    MappingMetadata dll_mm=PEParser(dll_buff);
-    IMAGE_SECTION_HEADER* dll_relloc=NULL;
-    char* dllBase=mapRoutineX(proc,dll_mm,&dll_relloc);
-    if(dllBase)
-        printf("DLL: %s has been mapped successfully!/n",dll);
-
-    // if(dll_relloc)
-    //     rellocate(proc,dllBase,(void*)dll_mm.heapBase,(void*)dll_mm.preferedBase,dll_relloc);
-
-    printf("updated loaded dll list:\n");
-    // till this point works.
-
-    syncLoadedDlls(dll,loadedDlls,count);
-    dumpLoadedDlls(*loadedDlls,count);
-
-    printf("is about to resolve IAT!\n");
-    resolveIAT(proc,dllBase,loadedDlls,count);
-    
-    // return essential info for filling IAT for those image depending on this dll
-    return dllBase;
-}
-
-}   
-
-
-bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
+extern bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
     for(unsigned int i=0;i<*count;i++)
     if(strcmp(dll,loaded_list[i])==0)
             return true;
@@ -372,140 +305,10 @@ bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
 }
 
 
-void* extractDllExportTable(){
+extern void* extractDllExportTable(){
 
 }
 
-// should work for both main PE and loaded DLLs
-void resolveIAT(HANDLE proc,BYTE* imageBase,char*** loadedDlls,size_t* count){
-    unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
-    long e_lfanew_val=0;
-    ReadProcessMemory(
-        proc,
-        (void*)e_lfanew,
-        &e_lfanew_val,
-        sizeof(long),
-        NULL
-    );
-    unsigned long long nt_headers=(unsigned long long)(imageBase+e_lfanew_val);
-    unsigned long long opt_headers=(unsigned long long)(nt_headers+0x18);
-    unsigned long long dataDirectoryList=(unsigned long long)(opt_headers+0x70);
-    unsigned long imageSz=0;
-    ReadProcessMemory
-    (
-        proc,
-        (void*)(opt_headers+0x38),
-        &imageSz,
-        sizeof(unsigned long),
-        NULL
-    );
-    printf("IMAGE SZ FROM resolveIAT: %i\n",imageSz);
-    unsigned long long import_data_directory_ls=(dataDirectoryList+(8*IMAGE_DIRECTORY_ENTRY_IMPORT));
-    unsigned long va_import_data_directory_descr=0;
-    unsigned long import_dd_sz=0;
-
-    ReadProcessMemory(
-        proc,
-        (void*)(import_data_directory_ls),
-        &va_import_data_directory_descr,
-        sizeof(unsigned int),
-        NULL
-    );
-    ReadProcessMemory(
-        proc,
-        (void*)(import_data_directory_ls+0x4),
-        &import_dd_sz,
-        sizeof(unsigned int),
-        NULL
-    );
-
-    unsigned long long import_descriptor=(unsigned long long)(imageBase+va_import_data_directory_descr);
-
-    unsigned int import_dd_count=import_dd_sz/20;
-    
-    while(true){
-        unsigned long rva_import_name_table=0;
-        unsigned long rva_iat=0;
-        unsigned long rva_name=0;
-        ReadProcessMemory(
-            proc,
-            (void*)(import_descriptor),
-            &rva_import_name_table,
-            sizeof(unsigned long),
-            NULL
-        );
-        if(rva_import_name_table==0 && rva_iat==0)
-            break;
-        ReadProcessMemory(
-            proc,
-            (void*)(import_descriptor+16),
-            &rva_iat,
-            sizeof(unsigned long),
-            NULL
-        );
-        ReadProcessMemory(
-            proc,
-            (void*)(import_descriptor+12),
-            &rva_name,
-            sizeof(unsigned long),
-            NULL
-        );
- 
-        unsigned long long import_name_table=(unsigned long long)(imageBase+rva_import_name_table);
-        unsigned long long import_address_table=(unsigned long long)(imageBase+rva_iat);
-        unsigned long long dll_name=(unsigned long long)(imageBase+rva_name);
-
-
-        char c='x';
-        int read=0;
-        char *__dll__name=calloc(260,1);
-        while(read<49){
-        ReadProcessMemory(
-            proc,
-            (void*)(dll_name+read),
-            &c,
-            sizeof(char),
-            NULL
-        );
-        strcpy((char*)(__dll__name+read),&c);
-        if(c==0)
-            break;
-        read++;
-        }
-        int length=0;
-        for(int i=0;i<260;i++){
-            length++;
-            if(__dll__name[i]==0)
-                break;
-        }
-        char* _tmp=realloc(__dll__name,length);
-        if(_tmp!=NULL){
-            __dll__name=_tmp;
-            _tmp=NULL;
-        }
-
-        // dll name format is: name.dll
-        printf("working on DLL: %s\n",__dll__name);
-       
-        if(isDllLoaded(__dll__name,*loadedDlls,count))
-        {
-            // unsigned long long table=(unsigned long long)extractDllExportTable();
-            // // apply IAT resolving
-
-        }
-        else
-        {
-            printf("%s is not loaded so injectDLL()\n",__dll__name);
-            char* base=injectDLL(proc,__dll__name,loadedDlls,count);
-            // apply IAT resolving 
-
-        }
-
-        import_descriptor+=20;
-    }
-
-
-}
 
 
 bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
@@ -514,7 +317,8 @@ HMODULE ntdll=GetModuleHandleA("ntdll");
 T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
 T_NtUnmapViewOfSection NtUnmapViewOfSection=(T_NtUnmapViewOfSection)GetProcAddress(ntdll,"NtUnmapViewOfSection");
 T_NtCreateSection NtCreateSection=(T_NtCreateSection)GetProcAddress(ntdll,"NtCreateSection");
-    
+P_LdrLoadDll LdrLoadDll=(P_LdrLoadDll)GetProcAddress(ntdll,"LdrLoadDll");
+
 PROCESS_BASIC_INFORMATION self_pinfo;
 unsigned long sz=sizeof(self_pinfo);
     if(NtQueryInformationProcess(
@@ -606,7 +410,7 @@ size_t count=1;
 char** loadedDlls=malloc(sizeof(char*)*count);
 loadedDlls[0]=native;
 
-resolveIAT(proc,remoteV,&loadedDlls,&count);
+resolveIAT(proc,LdrLoadDll,remoteV,&loadedDlls,&count);
 
 dumpLoadedDlls(loadedDlls,&count);
 
