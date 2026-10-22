@@ -8,6 +8,8 @@
 // you want to inject dll to remote process but you cannot use high level apis like LoadLibary().
 // inject DlL manually maps dll to remote process address space + resolves its IAT (injects all dependency dlls and resolves their IATS as well)
 
+int injectVirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*);
+
 
 extern char* injectDLL(
     HANDLE proc,
@@ -17,10 +19,16 @@ extern char* injectDLL(
     size_t* count,
     bool manual)
     {
+
+    printf("injecDll() started execution for %s!\n",dll);
+
     char* searchDirectory="C:\\Windows\\System32\\";
     char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
     strcpy(dll_file,searchDirectory);
     strcat(dll_file,dll);
+    
+    void* dllBase=NULL;
+
     HANDLE hDll=CreateFileA(
         dll_file,
         GENERIC_READ,
@@ -32,17 +40,57 @@ extern char* injectDLL(
     );
 
     if(hDll==INVALID_HANDLE_VALUE)
+    {   // vergiliusproject.com 
+      printf("file  does not exist on disk so calling injecVirtualDll()\n");
+      extractMapping4VirtualDll(proc,pinfo,dll);
+      return 0;
+    }
+    else 
     {
-        // vergiliusproject.com
-        // set api resolve. parse set api through peb.(target process)
-        // catch to which dll api resolves to
-        // check if resovled dll is loaded
-        // if not, load. if loaded return base.
+    DWORD onDiskSz=GetFileSize(hDll,NULL);
+    char* dll_buff=(char*)malloc(onDiskSz);
+    if(!ReadFile(
+        hDll,
+        dll_buff,
+        onDiskSz,
+        NULL,
+        NULL
+    )){
+        printf("[-] 337 failed to read dll file\n");
+        exit(1);
+    }
 
-        // all that in VA space in target process
+    MappingMetadata dll_mm=PEParser(dll_buff);
+    IMAGE_SECTION_HEADER* dll_relloc=NULL;
+}
+    dllBase=mapRoutineX(proc,dll_mm,&dll_relloc);
+    if(dllBase)
+        printf("DLL: %s has been mapped successfully!/n",dll);
+
+    // if(dll_relloc)
+    //     rellocate(proc,dllBase,(void*)dll_mm.heapBase,(void*)dll_mm.preferedBase,dll_relloc);
+
+    printf("updated loaded dll list:\n");
+    // till this point works.
+
+    syncLoadedDlls(dll,loadedDlls,count);
+    dumpLoadedDlls(*loadedDlls,count);
+
+    printf("is about to resolve IAT!\n");
+    resolveIAT(proc,pinfo,dllBase,loadedDlls,count);
+    
+    // return essential info for filling IAT for those image depending on this dll
+    return dllBase;
+}
+
+
+
+
+void injectVirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,char* dll){
+        
+        printf("//////injection of dll: %s\n",dll);
         __uint64_t _peb=(__uint64_t)pinfo.PebBaseAddress;
         __uint64_t _api_set=_peb+0x68; // API_SET_NAMESPACE
-
         __uint64_t _api_set_count=(__uint64_t)_api_set+(sizeof(unsigned long)*3);
         __uint64_t _api_set_entry_offset=(__uint64_t)_api_set+(sizeof(unsigned long)*4);
         
@@ -122,7 +170,7 @@ extern char* injectDLL(
                  continue;
             }
             
-            unsigned long _value_offset=entry+(sizeof(unsigned long)*4);
+            __uint64_t _value_offset=entry+(sizeof(unsigned long)*4);
             unsigned long value_offset=0;
             unsigned long value_count=0;
 
@@ -138,6 +186,7 @@ extern char* injectDLL(
                 proc,
                 (void*)(entry+(sizeof(unsigned long)*5)),
                 &value_count,
+                sizeof(unsigned long),
                 NULL
             )
         )
@@ -149,8 +198,8 @@ extern char* injectDLL(
         __uint64_t _api_set_value_entry=(__uint64_t)(entry+value_offset);
         for(unsigned int i=0;i<value_count;i++)
         {
-          __uint64_t _og_dll_name_offs=(__uint64_t)(_api_set_value_entry+(sizeof(unsigned long)*3))
-          unsigned long  og_dll_name_length=0;
+          __uint64_t _og_dll_name_offs=(__uint64_t)(_api_set_value_entry+(sizeof(unsigned long)*3));
+          unsigned long  og_dll_name_sz=0;
           __uint64_t og_dll_name_offs=0;
 
           if(!ReadProcessMemory(
@@ -162,7 +211,7 @@ extern char* injectDLL(
             ) || !ReadProcessMemory(
                     proc,
                     (void*)(_api_set_value_entry+(sizeof(unsigned long)*4)),
-                    &og_dll_name_offs,
+                    &og_dll_name_sz,
                     sizeof(unsigned long),
                     NULL
             ))
@@ -171,62 +220,38 @@ extern char* injectDLL(
                 exit(1);
             }
 
-            
+            size_t og_dll_name_length=og_dll_name_sz/sizeof(wchar_t);
             wchar_t og_dll[og_dll_name_length+1];
             og_dll[og_dll_name_length-1]='\0';
 
             ReadProcessMemory(
                 proc,
                 (void*)og_dll_name_offs,
-                
+                og_dll,
+                og_dll_name_sz,
+                NULL
             );
+
+            char real_dll[og_dll_name_length+1];
+            real_dll[og_dll_name_length-1]='\0';
+            for(size_t k=0;k<og_dll_name_length;k++)
+                real_dll[k]=(char)(og_dll[k]);
+
+            printf("%s maps to %s\n",dll,real_dll);
+
+
+        
+            // return injectDll(...)
 
             _api_set_value_entry+=sizeof(API_SET_VALUE_ENTRY);
 
         }
             
-
-
-
-           return 0;
+        //    return NULL;
         }
 
-      
-       
-    }
-    
-    DWORD onDiskSz=GetFileSize(hDll,NULL);
-    char* dll_buff=(char*)malloc(onDiskSz);
-    if(!ReadFile(
-        hDll,
-        dll_buff,
-        onDiskSz,
-        NULL,
-        NULL
-    )){
-        printf("[-] 337 failed to read dll file\n");
-        exit(1);
-    }
+    //   return NULL;
 
-    MappingMetadata dll_mm=PEParser(dll_buff);
-    IMAGE_SECTION_HEADER* dll_relloc=NULL;
-    char* dllBase=mapRoutineX(proc,dll_mm,&dll_relloc);
-    if(dllBase)
-        printf("DLL: %s has been mapped successfully!/n",dll);
 
-    // if(dll_relloc)
-    //     rellocate(proc,dllBase,(void*)dll_mm.heapBase,(void*)dll_mm.preferedBase,dll_relloc);
 
-    printf("updated loaded dll list:\n");
-    // till this point works.
-
-    syncLoadedDlls(dll,loadedDlls,count);
-    dumpLoadedDlls(*loadedDlls,count);
-
-    printf("is about to resolve IAT!\n");
-    resolveIAT(proc,pinfo,dllBase,loadedDlls,count);
-    
-    // return essential info for filling IAT for those image depending on this dll
-    return dllBase;
 }
-

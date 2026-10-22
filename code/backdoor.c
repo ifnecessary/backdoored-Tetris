@@ -102,6 +102,7 @@ extern MappingMetadata PEParser(BYTE* pe){
     // extracting section alignmnet (crucial for mapping)
     mm.sectionAlignment=*(unsigned long*)(p_OPT_HEADERS+0x20);
     mm.dataDirectoryList=(unsigned long long)(p_OPT_HEADERS+0x70);
+   
     return mm;
 }
 
@@ -298,7 +299,7 @@ extern void dumpLoadedDlls(char** dllList,size_t* count){
 
 extern bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
     for(unsigned int i=0;i<*count;i++)
-    if(strcmp(dll,loaded_list[i])==0)
+        if(strcmp(dll,loaded_list[i])==0)
             return true;
     return false;
 
