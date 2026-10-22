@@ -1,42 +1,26 @@
 #include <windows.h>
+#include <ntdll_imit.h>
+#include <tetris.h>
+#include <wchar.h>
+#include <stdio.h>
+#include <string.h>
+// injectDLL() can be used by everybody for any project. This is abstraction and specifically useful when
+// you want to inject dll to remote process but you cannot use high level apis like LoadLibary().
+// inject DlL manually maps dll to remote process address space + resolves its IAT (injects all dependency dlls and resolves their IATS as well)
 
-// dll injee
 
-extern char* injectDLL(P_LdrLoadDll LdrLoadDll,HANDLE proc,char* dll,char*** loadedDlls,size_t* count,bool manual){
-    // objectives: 
-    // inject dll to remote process
-    // resolve IAT for injected dll
-    // !: only dll loaded is ntdll.
-    // think about possible ways to implement such dll injecion
-    //
+extern char* injectDLL(
+    HANDLE proc,
+    PROCESS_BASIC_INFORMATION pinfo,
+    char* dll,
+    char*** loadedDlls,
+    size_t* count,
+    bool manual)
+    {
     char* searchDirectory="C:\\Windows\\System32\\";
     char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
     strcpy(dll_file,searchDirectory);
     strcat(dll_file,dll);
-    if(!manual) 
-    {
-        void* dllNameRemote=VirtualAllocEx(
-            proc,
-            NULL,
-            strlen(dll_file)+1,
-            MEM_COMMIT | MEM_RESERVE,
-            PAGE_READWRITE
-        );
-        
-        struct Args {
-            wchar_t* pathToFile;
-            unsigned long flags;
-            PUNICODE_STRING moduleFileName;
-            HANDLE* handle;
-
-        };
-
-        struct Args args;
-        
-        
-    }
-    else 
-    {
     HANDLE hDll=CreateFileA(
         dll_file,
         GENERIC_READ,
@@ -49,12 +33,166 @@ extern char* injectDLL(P_LdrLoadDll LdrLoadDll,HANDLE proc,char* dll,char*** loa
 
     if(hDll==INVALID_HANDLE_VALUE)
     {
+        // vergiliusproject.com
         // set api resolve. parse set api through peb.(target process)
         // catch to which dll api resolves to
         // check if resovled dll is loaded
         // if not, load. if loaded return base.
-        printf("[-] REQUIRED DLL IS NOT PRESENT ON THE SYSTEM!\n");
-        exit(1);
+
+        // all that in VA space in target process
+        __uint64_t _peb=(__uint64_t)pinfo.PebBaseAddress;
+        __uint64_t _api_set=_peb+0x68; // API_SET_NAMESPACE
+
+        __uint64_t _api_set_count=(__uint64_t)_api_set+(sizeof(unsigned long)*3);
+        __uint64_t _api_set_entry_offset=(__uint64_t)_api_set+(sizeof(unsigned long)*4);
+        
+        unsigned long api_set_count=0;
+        unsigned long entry_offset=0;
+        if(!ReadProcessMemory(
+            proc,
+            (void*)_api_set_count,
+            &api_set_count,
+            sizeof(unsigned long),
+            NULL
+        ) || !ReadProcessMemory(
+             proc,
+            (void*)_api_set_entry_offset,
+            &entry_offset,
+            sizeof(unsigned long),
+            NULL
+        ))
+        {
+            printf("[-52] INJECTOR\n");
+            exit(1);
+        }
+
+        __uint64_t entry=_api_set+entry_offset;
+
+
+        for(unsigned long i=0;i<api_set_count;i++)
+        {
+
+           __uint64_t _api_set_name_offs=entry+sizeof(unsigned long);
+           unsigned long api_set_name_offs=0;
+           unsigned long name_length=0;
+           if(!ReadProcessMemory(
+                proc,
+                (void*)_api_set_name_offs,
+                &api_set_name_offs,
+                sizeof(unsigned long),
+                NULL
+            ) || 
+            !ReadProcessMemory(
+                proc,
+                (void*)(entry+(sizeof(unsigned long)*2)),
+                &name_length,
+                sizeof(unsigned long),
+                NULL
+            ))
+            {
+                printf("[-78] injec\n");
+                exit(1);
+            }
+
+            size_t length=name_length/sizeof(wchar_t);
+
+            wchar_t virtual_dll_name[length+1];
+
+            ReadProcessMemory(
+                proc,
+                (void*)(_api_set+api_set_name_offs),
+                virtual_dll_name,
+                name_length,
+                NULL
+            );
+            
+            virtual_dll_name[length-1]='\0';
+            
+            char virtual_dll_name_char[length+1];
+
+            for(size_t i=0;i<length;i++)
+                virtual_dll_name_char[i]=(char)(virtual_dll_name[i]);
+            
+            virtual_dll_name_char[length-1]='\0';
+
+            printf("API SET DLL: %s\n",virtual_dll_name_char);
+
+            if(strncmp(dll,virtual_dll_name_char,strlen(dll))!=0){
+                 entry+=sizeof(API_SET_NAMESPACE_ENTRY);
+                 continue;
+            }
+            
+            unsigned long _value_offset=entry+(sizeof(unsigned long)*4);
+            unsigned long value_offset=0;
+            unsigned long value_count=0;
+
+           if(!ReadProcessMemory(
+                proc,
+                (void*)_value_offset,
+                &value_offset,
+                sizeof(unsigned long),
+                NULL
+            ) || 
+            
+            !ReadProcessMemory(
+                proc,
+                (void*)(entry+(sizeof(unsigned long)*5)),
+                &value_count,
+                NULL
+            )
+        )
+        {
+            printf("[-145] injector\n");
+            exit(1);
+        }
+
+        __uint64_t _api_set_value_entry=(__uint64_t)(entry+value_offset);
+        for(unsigned int i=0;i<value_count;i++)
+        {
+          __uint64_t _og_dll_name_offs=(__uint64_t)(_api_set_value_entry+(sizeof(unsigned long)*3))
+          unsigned long  og_dll_name_length=0;
+          __uint64_t og_dll_name_offs=0;
+
+          if(!ReadProcessMemory(
+                proc,
+                (void*)_og_dll_name_offs,
+                &og_dll_name_offs,
+                sizeof(unsigned long),
+                NULL
+            ) || !ReadProcessMemory(
+                    proc,
+                    (void*)(_api_set_value_entry+(sizeof(unsigned long)*4)),
+                    &og_dll_name_offs,
+                    sizeof(unsigned long),
+                    NULL
+            ))
+            {
+                printf("[-170] injector\n");
+                exit(1);
+            }
+
+            
+            wchar_t og_dll[og_dll_name_length+1];
+            og_dll[og_dll_name_length-1]='\0';
+
+            ReadProcessMemory(
+                proc,
+                (void*)og_dll_name_offs,
+                
+            );
+
+            _api_set_value_entry+=sizeof(API_SET_VALUE_ENTRY);
+
+        }
+            
+
+
+
+           return 0;
+        }
+
+      
+       
     }
     
     DWORD onDiskSz=GetFileSize(hDll,NULL);
@@ -86,10 +224,9 @@ extern char* injectDLL(P_LdrLoadDll LdrLoadDll,HANDLE proc,char* dll,char*** loa
     dumpLoadedDlls(*loadedDlls,count);
 
     printf("is about to resolve IAT!\n");
-    resolveIAT(proc,dllBase,loadedDlls,count);
+    resolveIAT(proc,pinfo,dllBase,loadedDlls,count);
     
     // return essential info for filling IAT for those image depending on this dll
     return dllBase;
 }
 
-}

