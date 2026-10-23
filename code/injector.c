@@ -10,7 +10,7 @@
 // inject DlL manually maps dll to remote process address space + resolves its IAT (injects all dependency dlls and resolves their IATS as well)
 
 char** extractMapping4VirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*,unsigned int*);
-
+bool compare(char*,char*);
 
 extern __uint64_t* injectDLL(
     HANDLE proc,
@@ -51,6 +51,10 @@ extern __uint64_t* injectDLL(
         printf("could not find virtual --- real dll mapping on system!\n");
         exit(1);
       }
+      
+      for(int i=0;i<mappedDLLsCount;i++)
+        printf("mapped dll list for dll: %s is %s\n",dll,realDllsList[i]);
+      
       __uint64_t *exportDirBases=(__uint64_t*)malloc(sizeof(__uint64_t)*mappedDLLsCount);
       for(unsigned int ifnece=0;ifnece<mappedDLLsCount;ifnece++){
         __uint64_t *exportDirBase=injectDLL(
@@ -118,7 +122,13 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
         
         char** mappedDLls=(char**)malloc(sizeof(char*));
         *mappedDLls=NULL;
-        printf("//////injection of dll: %s\n",dll);
+        size_t targetDllSz=strlen(dll);
+        // format will be some-dll-name-x-y-z
+        char targetDll[targetDllSz+1];
+        targetDll[targetDllSz]='\0';
+        strcpy(targetDll,dll);
+        *strrchr(targetDll,'.')='\0';
+
         __uint64_t _peb=(__uint64_t)pinfo.PebBaseAddress;
         __uint64_t __api_set=_peb+0x68; // API_SET_NAMESPACE
         __uint64_t _api_set=0;
@@ -186,7 +196,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
             size_t length=name_length/sizeof(wchar_t);
 
             wchar_t virtual_dll_name[length+1];
-
+            virtual_dll_name[length]='\0';
             ReadProcessMemory(
                 proc,
                 (void*)(_api_set+api_set_name_offs),
@@ -195,31 +205,31 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
                 NULL
             );
 
-            virtual_dll_name[length]='\0';
-    
-            char virtual_dll_name_char[length+5];
-
-            for(size_t i=0;i<length;i++)
-                virtual_dll_name_char[i]=(char)(virtual_dll_name[i]);
+            // format is dll-some-name-x-y-z
+            char virtual_dll_name_char[length+1];
+            for(size_t i=0;i<=length;i++)
+                if(i!=length)    
+                    virtual_dll_name_char[i]=(char)(virtual_dll_name[i]);
+                else
+                    virtual_dll_name_char[i]='\0';
             
-            strcpy((char*)(virtual_dll_name_char+length),".dll");
-            virtual_dll_name_char[length+4]='\0';
-
-            printf("API SET DLL: %s\n",virtual_dll_name_char);
-
-            if(strcmp(dll,virtual_dll_name_char)!=0){
+            // formt is dll_name-x-y-z (z should be ignored)
+            // virtual dll  --> specific dll with specific build
+            // it is better to compare hashes but leaving for simplicity
+            // read notes on code. needs fix here
+            if(!compare(targetDll,virtual_dll_name_char)){
                  entry+=sizeof(API_SET_NAMESPACE_ENTRY);
                  continue;
             }
             
             __uint64_t _value_offset=entry+(sizeof(unsigned long)*4);
-            unsigned long value_offset=0;
-            unsigned long value_count=0;
+            unsigned long dll_list_offset=0;
+            unsigned long dll_count=0;
 
            if(!ReadProcessMemory(
                 proc,
                 (void*)_value_offset,
-                &value_offset,
+                &dll_list_offset,
                 sizeof(unsigned long),
                 NULL
             ) || 
@@ -227,7 +237,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
             !ReadProcessMemory(
                 proc,
                 (void*)(entry+(sizeof(unsigned long)*5)),
-                &value_count,
+                &dll_count,
                 sizeof(unsigned long),
                 NULL
             )
@@ -237,12 +247,12 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
             exit(1);
         }
 
-        __uint64_t _api_set_value_entry=(__uint64_t)(entry+value_offset);
-        for(unsigned int i=0;i<value_count;i++)
-        {
+        // *is dll_list_offset offset from entry or base*
+        __uint64_t _api_set_value_entry=(__uint64_t)(entry+dll_list_offset);
+        for(unsigned int i=0;i<dll_count;i++){
           __uint64_t _og_dll_name_offs=(__uint64_t)(_api_set_value_entry+(sizeof(unsigned long)*3));
           unsigned long  og_dll_name_sz=0;
-          __uint64_t og_dll_name_offs=0;
+          __uint64_t og_dll_name_offs=0; // ?is this offset or actual address?
 
           if(!ReadProcessMemory(
                 proc,
@@ -266,20 +276,23 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
             wchar_t og_dll[og_dll_name_length+1];
             og_dll[og_dll_name_length]='\0';
 
-            ReadProcessMemory(
+            if(!ReadProcessMemory(
                 proc,
                 (void*)og_dll_name_offs,
                 og_dll,
                 og_dll_name_sz,
                 NULL
-            );
+            )){
+                printf("[- 286] \n");
+                exit(1);
+            }
 
             char* real_dll=(char*)malloc(sizeof(char)*og_dll_name_length+1);
             real_dll[og_dll_name_length]='\0';
             for(size_t k=0;k<og_dll_name_length;k++)
                 real_dll[k]=(char)(og_dll[k]);
 
-            printf("%s maps to %s\n",dll,real_dll);
+            printf("---------------- %s maps to %s------------------\n",targetDll,real_dll);
 
             
             char** tmp=realloc(mappedDLls,sizeof(char*)*((*mappedDllsCount)+1));
@@ -297,4 +310,13 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
         return mappedDLls;
     }
     return mappedDLls;
+
+}
+
+bool compare(char* vDll,char*vSystemDll){
+    size_t len=strlen(vDll);
+    bool lastCheck=false;
+    if(strncasecmp(vDll,vSystemDll,len-1)==0)
+        return true;
+    return false;
 }
