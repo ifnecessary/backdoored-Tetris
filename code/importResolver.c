@@ -116,6 +116,8 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
        
         if(isDllLoaded(__dll__name,*loadedDlls,count))
         {
+            // this block is only being executed
+            // for ntdll.
             // unsigned long long table=(unsigned long long)extractDllExportTable();
             // // apply IAT resolving
 
@@ -123,8 +125,8 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
         else
         {
             printf("%s is not loaded so injectDLL()\n",__dll__name);
-            // LdrLoadDll() // ntdll implementation of loadl
-            char* base=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,false);
+            int exportedDirBaseCount=0;
+            __uint64_t* exportDirBases=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&exportDirBases);
             // apply IAT resolving 
 
         }

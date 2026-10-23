@@ -4,11 +4,12 @@
 #include <wchar.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 // injectDLL() can be used by everybody for any project. This is abstraction and specifically useful when
 // you want to inject dll to remote process but you cannot use high level apis like LoadLibary().
 // inject DlL manually maps dll to remote process address space + resolves its IAT (injects all dependency dlls and resolves their IATS as well)
 
-int injectVirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*);
+char** extractMapping4VirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*,unsigned int*);
 
 
 extern char* injectDLL(
@@ -17,7 +18,8 @@ extern char* injectDLL(
     char* dll,
     char*** loadedDlls,
     size_t* count,
-    bool manual)
+    int* exportedDirBaseCount
+)
     {
 
     printf("injecDll() started execution for %s!\n",dll);
@@ -27,7 +29,6 @@ extern char* injectDLL(
     strcpy(dll_file,searchDirectory);
     strcat(dll_file,dll);
     
-    void* dllBase=NULL;
 
     HANDLE hDll=CreateFileA(
         dll_file,
@@ -38,12 +39,34 @@ extern char* injectDLL(
         FILE_ATTRIBUTE_NORMAL,
         NULL
     );
-
+    
     if(hDll==INVALID_HANDLE_VALUE)
     {   // vergiliusproject.com 
-      printf("file  does not exist on disk so calling injecVirtualDll()\n");
-      extractMapping4VirtualDll(proc,pinfo,dll);
-      return 0;
+      printf("file  does not exist on disk so calling extractMapping4VirtualDll()\n");
+       int mappedDLLsCount=0;
+      // mapped dlls list (could be only one or more)
+      char** realDllsList=extractMapping4VirtualDll(proc,pinfo,dll,&mappedDLLsCount);
+      // exported directory bases of inejcted dlls
+      if(!mappedDLLsCount){
+        printf("could not find virtual --- real dll mapping on system!\n");
+        exit(1);
+      }
+      __uint64_t *exportDirBases=(__uint64_t*)malloc(sizeof(__uint64_t)*mappedDLLsCount);
+      for(unsigned int ifnece=0;ifnece<mappedDLLsCount;ifnece++){
+        __uint64_t *exportDirBase=injectDLL(
+            proc,
+            pinfo,
+            realDllsList[ifnece],
+            loadedDlls,
+            count,
+            true
+        );
+        exportDirBases[ifnece]=(__uint64_t)(*exportDirBase);
+
+      }      
+      ++(*exportedDirBaseCount);
+      return exportDirBases;
+
     }
     else 
     {
@@ -63,7 +86,7 @@ extern char* injectDLL(
     MappingMetadata dll_mm=PEParser(dll_buff);
     IMAGE_SECTION_HEADER* dll_relloc=NULL;
 }
-    dllBase=mapRoutineX(proc,dll_mm,&dll_relloc);
+    BYTE* dllBase=(BYTE*)mapRoutineX(proc,dll_mm,&dll_relloc);
     if(dllBase)
         printf("DLL: %s has been mapped successfully!/n",dll);
 
@@ -79,15 +102,25 @@ extern char* injectDLL(
     printf("is about to resolve IAT!\n");
     resolveIAT(proc,pinfo,dllBase,loadedDlls,count);
     
+    __uint64_t *exportDirBases=(__uint64_t*)malloc(sizeof(__uint64_t));
+    
+
+    *exportDirBases=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
+    ++(*exportedDirBaseCount);
+    return exportDirBases;
+    
+    
     // return essential info for filling IAT for those image depending on this dll
-    return dllBase;
+    
 }
 
 
 
 
-void injectVirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,char* dll){
+char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,char* dll,unsigned int* mappedDllsCount){
         
+        char** mappedDLls=(char**)malloc(sizeof(char*));
+        *mappedDLls=NULL;
         printf("//////injection of dll: %s\n",dll);
         __uint64_t _peb=(__uint64_t)pinfo.PebBaseAddress;
         __uint64_t _api_set=_peb+0x68; // API_SET_NAMESPACE
@@ -232,26 +265,26 @@ void injectVirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,char* dll){
                 NULL
             );
 
-            char real_dll[og_dll_name_length+1];
+            char* real_dll=(char*)malloc(sizeof(char)*og_dll_name_length+1);
             real_dll[og_dll_name_length-1]='\0';
-            for(size_t k=0;k<og_dll_name_length;k++)
-                real_dll[k]=(char)(og_dll[k]);
+            strncpy(real_dll,og_dll,og_dll_name_length);
 
             printf("%s maps to %s\n",dll,real_dll);
 
-
-        
-            // return injectDll(...)
+            
+            char** tmp=realloc(mappedDLls,sizeof(char*)*((*mappedDllsCount)+1));
+            if(tmp!=NULL){
+                mappedDLls=tmp;
+                tmp=NULL;
+            }
+            ++(*mappedDllsCount);
+            mappedDLls[*mappedDllsCount-1]=real_dll;
 
             _api_set_value_entry+=sizeof(API_SET_VALUE_ENTRY);
 
         }
             
-        //    return NULL;
-        }
-
-    //   return NULL;
-
-
-
+        return mappedDLls;
+    }
+    return mappedDLls;
 }
