@@ -12,7 +12,7 @@
 char** extractMapping4VirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*,unsigned int*);
 
 
-extern char* injectDLL(
+extern __uint64_t* injectDLL(
     HANDLE proc,
     PROCESS_BASIC_INFORMATION pinfo,
     char* dll,
@@ -59,12 +59,11 @@ extern char* injectDLL(
             realDllsList[ifnece],
             loadedDlls,
             count,
-            true
+            exportedDirBaseCount
         );
         exportDirBases[ifnece]=(__uint64_t)(*exportDirBase);
-
       }      
-      ++(*exportedDirBaseCount);
+
       return exportDirBases;
 
     }
@@ -85,7 +84,6 @@ extern char* injectDLL(
 
     MappingMetadata dll_mm=PEParser(dll_buff);
     IMAGE_SECTION_HEADER* dll_relloc=NULL;
-}
     BYTE* dllBase=(BYTE*)mapRoutineX(proc,dll_mm,&dll_relloc);
     if(dllBase)
         printf("DLL: %s has been mapped successfully!/n",dll);
@@ -109,14 +107,13 @@ extern char* injectDLL(
     ++(*exportedDirBaseCount);
     return exportDirBases;
     
-    
-    // return essential info for filling IAT for those image depending on this dll
-    
+}
+
 }
 
 
 
-
+// by virtual dll i mean api set dlls which actuaally get to be mapped to real dll existing on disk 
 char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,char* dll,unsigned int* mappedDllsCount){
         
         char** mappedDLls=(char**)malloc(sizeof(char*));
@@ -267,7 +264,8 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
 
             char* real_dll=(char*)malloc(sizeof(char)*og_dll_name_length+1);
             real_dll[og_dll_name_length-1]='\0';
-            strncpy(real_dll,og_dll,og_dll_name_length);
+            for(size_t k=0;k<og_dll_name_length;k++)
+                real_dll[k]=(char)(og_dll[k]);
 
             printf("%s maps to %s\n",dll,real_dll);
 

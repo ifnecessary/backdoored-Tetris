@@ -126,9 +126,9 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
         {
             printf("%s is not loaded so injectDLL()\n",__dll__name);
             int exportedDirBaseCount=0;
-            __uint64_t* exportDirBases=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&exportDirBases);
+            __uint64_t* exportDirBases=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&exportedDirBaseCount);
             // apply IAT resolving 
-
+            // loop through each exported dir base and resolve iat
         }
 
         import_descriptor+=20;
