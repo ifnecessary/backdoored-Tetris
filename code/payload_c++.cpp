@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <vector>
 
+
+// first check self privileges
 // dumping system schema (enumerating system environment and dumping in pretty format)
 // encrypt all the files with extension of .txt, .pdf, .doc + decryption program in case of pay. (imitating ransomware)
 // shellcode injection last step
