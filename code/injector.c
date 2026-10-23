@@ -120,7 +120,17 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
         *mappedDLls=NULL;
         printf("//////injection of dll: %s\n",dll);
         __uint64_t _peb=(__uint64_t)pinfo.PebBaseAddress;
-        __uint64_t _api_set=_peb+0x68; // API_SET_NAMESPACE
+        __uint64_t __api_set=_peb+0x68; // API_SET_NAMESPACE
+        __uint64_t _api_set=0;
+        ReadProcessMemory(
+            proc,
+            (void*)__api_set,
+            &_api_set,
+            sizeof(unsigned long long),
+            NULL
+        );
+        if(_api_set==0)
+            exit(1);
         __uint64_t _api_set_count=(__uint64_t)_api_set+(sizeof(unsigned long)*3);
         __uint64_t _api_set_entry_offset=(__uint64_t)_api_set+(sizeof(unsigned long)*4);
         
@@ -146,7 +156,8 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
 
         __uint64_t entry=_api_set+entry_offset;
 
-
+        printf("API SET COUNT IS %lu\n",api_set_count);
+        // loop never reaches execution 
         for(unsigned long i=0;i<api_set_count;i++)
         {
 
@@ -183,19 +194,20 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
                 name_length,
                 NULL
             );
-            
-            virtual_dll_name[length-1]='\0';
-            
-            char virtual_dll_name_char[length+1];
+
+            virtual_dll_name[length]='\0';
+    
+            char virtual_dll_name_char[length+5];
 
             for(size_t i=0;i<length;i++)
                 virtual_dll_name_char[i]=(char)(virtual_dll_name[i]);
             
-            virtual_dll_name_char[length-1]='\0';
+            strcpy((char*)(virtual_dll_name_char+length),".dll");
+            virtual_dll_name_char[length+4]='\0';
 
             printf("API SET DLL: %s\n",virtual_dll_name_char);
 
-            if(strncmp(dll,virtual_dll_name_char,strlen(dll))!=0){
+            if(strcmp(dll,virtual_dll_name_char)!=0){
                  entry+=sizeof(API_SET_NAMESPACE_ENTRY);
                  continue;
             }
@@ -252,7 +264,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
 
             size_t og_dll_name_length=og_dll_name_sz/sizeof(wchar_t);
             wchar_t og_dll[og_dll_name_length+1];
-            og_dll[og_dll_name_length-1]='\0';
+            og_dll[og_dll_name_length]='\0';
 
             ReadProcessMemory(
                 proc,
@@ -263,7 +275,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
             );
 
             char* real_dll=(char*)malloc(sizeof(char)*og_dll_name_length+1);
-            real_dll[og_dll_name_length-1]='\0';
+            real_dll[og_dll_name_length]='\0';
             for(size_t k=0;k<og_dll_name_length;k++)
                 real_dll[k]=(char)(og_dll[k]);
 
