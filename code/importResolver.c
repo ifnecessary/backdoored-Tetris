@@ -120,6 +120,8 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
             // for ntdll.
             // unsigned long long table=(unsigned long long)extractDllExportTable();
             // // apply IAT resolving
+            __uint64_t expTable=extractImageExportTable();
+            // resolve()
 
         }
         else
@@ -127,8 +129,12 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
             printf("%s is not loaded so injectDLL()\n",__dll__name);
             int exportedDirBaseCount=0;
             __uint64_t* exportDirBases=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&exportedDirBaseCount);
-            // apply IAT resolving 
-            // loop through each exported dir base and resolve iat
+            for(int __0x0x0xBOOOOOOO=0;__0x0x0xBOOOOOOO<exportedDirBaseCount;__0x0x0xBOOOOOOO++){
+                if(exportDirBases[__0x0x0xBOOOOOOO]==0)
+                    continue;
+                __uint64_t expTable=exportDirBases[__0x0x0xBOOOOOOO];
+                // resolve()
+            }
         }
 
         import_descriptor+=20;

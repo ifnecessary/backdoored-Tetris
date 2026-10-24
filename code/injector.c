@@ -24,6 +24,8 @@ extern __uint64_t* injectDLL(
 
     printf("injecDll() started execution for %s!\n",dll);
 
+  
+
     char* searchDirectory="C:\\Windows\\System32\\";
     char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
     strcpy(dll_file,searchDirectory);
@@ -52,11 +54,15 @@ extern __uint64_t* injectDLL(
         exit(1);
       }
       
-      for(int i=0;i<mappedDLLsCount;i++)
-        printf("mapped dll list for dll: %s is %s\n",dll,realDllsList[i]);
       
       __uint64_t *exportDirBases=(__uint64_t*)malloc(sizeof(__uint64_t)*mappedDLLsCount);
+      
       for(unsigned int ifnece=0;ifnece<mappedDLLsCount;ifnece++){
+        char* targetDll_=realDllsList[ifnece];
+        if(isDllLoaded(targetDll_,*loadedDlls,count)){
+            *exportDirBases=(__uint64_t)0;
+            continue;
+        }
         __uint64_t *exportDirBase=injectDLL(
             proc,
             pinfo,
@@ -104,12 +110,11 @@ extern __uint64_t* injectDLL(
     printf("is about to resolve IAT!\n");
     resolveIAT(proc,pinfo,dllBase,loadedDlls,count);
     
-    __uint64_t *exportDirBases=(__uint64_t*)malloc(sizeof(__uint64_t));
+    __uint64_t *exportDirBase=(__uint64_t*)malloc(sizeof(__uint64_t));
     
-
-    *exportDirBases=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
+    *exportDirBase=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
     ++(*exportedDirBaseCount);
-    return exportDirBases;
+    return exportDirBase;
     
 }
 
@@ -248,11 +253,12 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
         }
 
         // *is dll_list_offset offset from entry or base*
-        __uint64_t _api_set_value_entry=(__uint64_t)(entry+dll_list_offset);
+        __uint64_t _api_set_value_entry=(__uint64_t)(_api_set+dll_list_offset);
+        
         for(unsigned int i=0;i<dll_count;i++){
           __uint64_t _og_dll_name_offs=(__uint64_t)(_api_set_value_entry+(sizeof(unsigned long)*3));
           unsigned long  og_dll_name_sz=0;
-          __uint64_t og_dll_name_offs=0; // ?is this offset or actual address?
+          __uint64_t og_dll_name_offs=0; // offs from schema base
 
           if(!ReadProcessMemory(
                 proc,
@@ -278,7 +284,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
 
             if(!ReadProcessMemory(
                 proc,
-                (void*)og_dll_name_offs,
+                (void*)(_api_set+og_dll_name_offs),
                 og_dll,
                 og_dll_name_sz,
                 NULL
@@ -294,7 +300,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
 
             printf("---------------- %s maps to %s------------------\n",targetDll,real_dll);
 
-            
+        
             char** tmp=realloc(mappedDLls,sizeof(char*)*((*mappedDllsCount)+1));
             if(tmp!=NULL){
                 mappedDLls=tmp;

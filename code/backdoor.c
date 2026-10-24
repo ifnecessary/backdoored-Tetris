@@ -306,8 +306,9 @@ extern bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
 }
 
 
-extern void* extractDllExportTable(){
+extern __uint64_t extractImageExportTable(){
 
+    return 0;
 }
 
 
