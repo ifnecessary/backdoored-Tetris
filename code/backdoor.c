@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <memory.h>
 #include <windows.h>
@@ -276,39 +277,101 @@ extern void rellocate(HANDLE proc,void* remoteImageBase,void* heapBase,void* pre
     printf("relocated successfuly!\n");
 }
 
-extern bool syncLoadedDlls(char* dll, char*** dllList,size_t *count){
-*count=(*count)+1;
-char** tmp=realloc(*dllList,*count);
+extern void lowercase(char* str){
+    for(int i=0;i<strlen(str);i++){
+        char lowered=tolower(str[i]);
+        str[i]=lowered;
+    }
+}
+
+extern bool syncLoadedDlls(char* dll,__uint64_t exportDirBase, DLL** dllList,size_t *count){
+// dll is on heap
+++(*count);
+DLL* tmp=realloc(*dllList,(*count)*sizeof(DLL));
 if(tmp!=NULL)
     *dllList=tmp;
 else 
     exit(1);
-(*dllList)[(*count)-1]=dll;
+(*dllList)[*count-1].dll_name=dll;
+(*dllList)[*count-1].exportDirBase=exportDirBase;
+// finish tthis 
 printf("DLL added to loaded dlls list\n");
 return true;
 }
 
 
-extern void dumpLoadedDlls(char** dllList,size_t* count){
+extern void dumpLoadedDlls(DLL* dllList,size_t* count){
     printf("LOADED DLL LIST: \n");
     for(unsigned int i=0;i<(*count);i++)
-        printf("%i) %s\n",i+1,dllList[i]);
+        printf("%i) %s ---- Export Directory Base: %p\n",i+1,dllList[i].dll_name,dllList[i].exportDirBase);
 
 }
 
 
-extern bool isDllLoaded(char* dll,char** loaded_list,size_t* count){
+extern bool isDllLoaded(char* dll,DLL* loaded_list,size_t* count){
     for(unsigned int i=0;i<*count;i++)
-        if(strcmp(dll,loaded_list[i])==0)
+        if(strcmp(dll,loaded_list[i].dll_name)==0)
             return true;
     return false;
 
 }
 
 
-extern __uint64_t extractImageExportTable(){
+static bool ReadRemoteMemory(HANDLE proc,LPCVOID remoteAddress, LPVOID localBuffer, SIZE_T size) {
+    SIZE_T bytesRead = 0;
+    return ReadProcessMemory(proc, remoteAddress, localBuffer, size, &bytesRead) && (bytesRead == size);
+}
 
-    return 0;
+extern __uint64_t extractImageExportTableBase(HANDLE proc,BYTE* imageBase) {
+    if (!imageBase) return 0;
+
+    IMAGE_DOS_HEADER dosHeader;
+    if (!ReadRemoteMemory(proc,imageBase, &dosHeader, sizeof(IMAGE_DOS_HEADER))) {
+        return 0;
+    }
+
+    if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE) {
+        return 0; 
+    }
+
+    BYTE* ntHeadersPtr = imageBase + dosHeader.e_lfanew;
+    
+    IMAGE_NT_HEADERS32 ntHeaders32;
+    if (!ReadRemoteMemory(proc,ntHeadersPtr, &ntHeaders32, sizeof(IMAGE_NT_HEADERS32))) {
+        return 0;
+    }
+
+    if (ntHeaders32.Signature != IMAGE_NT_SIGNATURE) {
+        return 0; 
+    }
+
+    DWORD exportDirRVA = 0;
+
+    if (ntHeaders32.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
+        IMAGE_NT_HEADERS64 ntHeaders64;
+        if (!ReadRemoteMemory(proc,ntHeadersPtr, &ntHeaders64, sizeof(IMAGE_NT_HEADERS64))) {
+            return 0;
+        }
+        exportDirRVA = ntHeaders64.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    } 
+    else if (ntHeaders32.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR32_MAGIC) {
+        exportDirRVA = ntHeaders32.OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
+    } 
+    else {
+        return 0; 
+    }
+
+    if (exportDirRVA == 0) {
+        return 0; 
+    }
+
+    return (__uint64_t)(imageBase + exportDirRVA);
+}
+
+
+extern __uint64_t extractImageExportTableBase_LS(char* dll,DLL*ls){
+
+
 }
 
 
@@ -408,10 +471,11 @@ if(!WriteProcessMemory(
 
 char* native="ntdll.dll";
 size_t count=1;
-char** loadedDlls=malloc(sizeof(char*)*count);
-loadedDlls[0]=native;
+DLL* loadedDlls=malloc(sizeof(DLL)*count);
+loadedDlls->dll_name=native;
+loadedDlls->exportDirBase=extractImageExportTableBase(proc,(BYTE*)ntdll);
 
-resolveIAT(proc,pinfo,remoteV,&loadedDlls,&count);
+resolveIAT(proc,pinfo,remoteV,&loadedDlls,&count,"Main PE");
 
 dumpLoadedDlls(loadedDlls,&count);
 

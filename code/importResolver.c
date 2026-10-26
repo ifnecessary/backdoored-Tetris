@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 // works for both main PE and loaded DLLs
-extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageBase,char*** loadedDlls,size_t* count){
+extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageBase,DLL** loadedDlls,size_t* count,char* resolvingFor){
     unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
     long e_lfanew_val=0;
     ReadProcessMemory(
@@ -81,8 +81,6 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
         unsigned long long import_name_table=(unsigned long long)(imageBase+rva_import_name_table);
         unsigned long long import_address_table=(unsigned long long)(imageBase+rva_iat);
         unsigned long long dll_name=(unsigned long long)(imageBase+rva_name);
-
-
         char c='x';
         int read=0;
         char *__dll__name=calloc(260,1);
@@ -112,16 +110,15 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
         }
 
         // dll name format is: name.dll
-        printf("working on DLL: %s\n",__dll__name);
+        lowercase(__dll__name);
+        printf("Resolving for: %s Working on DLL: %s\n",resolvingFor,__dll__name);
        
-        if(isDllLoaded(__dll__name,*loadedDlls,count))
-        {
-            // this block is only being executed
-            // for ntdll.
-            // unsigned long long table=(unsigned long long)extractDllExportTable();
-            // // apply IAT resolving
-            __uint64_t expTable=extractImageExportTable();
-            // resolve()
+        // import_name_table *
+        // import_address_table *
+        if(isDllLoaded(__dll__name,*loadedDlls,count)){
+        
+            __uint64_t expTable=extractImageExportTableBase_LS(__dll__name,*loadedDlls);
+            resolveCore(proc,import_address_table,import_name_table,expTable);
 
         }
         else
@@ -130,15 +127,22 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
             int exportedDirBaseCount=0;
             __uint64_t* exportDirBases=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&exportedDirBaseCount);
             for(int __0x0x0xBOOOOOOO=0;__0x0x0xBOOOOOOO<exportedDirBaseCount;__0x0x0xBOOOOOOO++){
-                if(exportDirBases[__0x0x0xBOOOOOOO]==0)
-                    continue;
                 __uint64_t expTable=exportDirBases[__0x0x0xBOOOOOOO];
-                // resolve()
+                resolveCore(proc,import_address_table,import_name_table,expTable);
+                
             }
         }
 
         import_descriptor+=20;
     }
 
+
+}
+
+
+void resolveCore(HANDLE proc,__uint64_t imp_addr_table,__uint64_t imp_name_table,__uint64_t exportDirBase){
+    // imp_name_table is list of rva s to procedure name
+    // imp_addr_table is list of slots where addr of function should be written
+    
 
 }

@@ -16,7 +16,7 @@ extern __uint64_t* injectDLL(
     HANDLE proc,
     PROCESS_BASIC_INFORMATION pinfo,
     char* dll,
-    char*** loadedDlls,
+    DLL** loadedDlls,
     size_t* count,
     int* exportedDirBaseCount
 )
@@ -60,7 +60,8 @@ extern __uint64_t* injectDLL(
       for(unsigned int ifnece=0;ifnece<mappedDLLsCount;ifnece++){
         char* targetDll_=realDllsList[ifnece];
         if(isDllLoaded(targetDll_,*loadedDlls,count)){
-            *exportDirBases=(__uint64_t)0;
+            printf("%s is already loaded so skipping for injection\n",targetDll_);
+            *exportDirBases=(__uint64_t)extractImageExportTableBase_LS(targetDll_,*loadedDlls);
             continue;
         }
         __uint64_t *exportDirBase=injectDLL(
@@ -104,16 +105,19 @@ extern __uint64_t* injectDLL(
     printf("updated loaded dll list:\n");
     // till this point works.
 
-    syncLoadedDlls(dll,loadedDlls,count);
-    dumpLoadedDlls(*loadedDlls,count);
-
-    printf("is about to resolve IAT!\n");
-    resolveIAT(proc,pinfo,dllBase,loadedDlls,count);
-    
     __uint64_t *exportDirBase=(__uint64_t*)malloc(sizeof(__uint64_t));
     
     *exportDirBase=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
+
+    syncLoadedDlls(dll,*exportDirBase,loadedDlls,count);
+    dumpLoadedDlls(*loadedDlls,count);
+    printf("is about to resolve IAT!\n");
+    resolveIAT(proc,pinfo,dllBase,loadedDlls,count,dll);
+    
+   
     ++(*exportedDirBaseCount);
+   
+    //  add to local db 
     return exportDirBase;
     
 }
