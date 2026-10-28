@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <string.h>
 #include <ntdll_imit.h>
 #include <tetris.h>
 #include <stdio.h>
@@ -93,7 +94,7 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
             sizeof(char),
             NULL
         );
-        strcpy((char*)(__dll__name+read),&c);
+        *(__dll__name+read)=c;
         if(c==0)
             break;
         read++;
@@ -114,8 +115,7 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
         lowercase(__dll__name);
         printf("Resolving for: %s Working on DLL: %s\n",resolvingFor,__dll__name);
        
-        // import_name_table *
-        // import_address_table *
+        // analyze the flow
         DLL *__loaded_dll__=isDllLoaded(__dll__name,*loadedDlls,count);
         if(__loaded_dll__)
             resolveCore(
@@ -136,22 +136,36 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
             {
                 // resolving classic dll
                 DLL* _x_=(DLL*)__injected__;
+                resolveCore(
+                    proc,
+                    _x_->dll_base,
+                    (__uint64_t)imageBase,
+                    import_address_table,
+                    import_name_table,
+                    _x_->exportDirBase  
+                );
             }
             else if(injectedCount>1){
                 // resolving classic dll list given by api set virtual dlls
                 DLL** _x_=(DLL**)__injected__;
-
+                resolveVirtuals(
+                    proc,
+                    import_address_table,
+                    import_name_table,
+                    imageBase,
+                    _x_,
+                    injectedCount
+                );
             }
         }
 
         import_descriptor+=20;
     }
 
-
 }
 
 
-void resolveCore(
+bool resolveCore(
     HANDLE proc,
     __uint64_t imageBase, // export source
     __uint64_t imageBase_imports, // import source
@@ -160,13 +174,7 @@ void resolveCore(
     __uint64_t exportDirBase
 )
 {
-    // imp_name_table is list of rvas. 
-    // each rva (from base of image contain iat) to struct {word hint; char* name}
-    // imp_addr_table is list of slots where addr of function should be written
-    // export dir base {rva,size} rva to IMAGE_EXPORT_DIRECTORY STRUCTUE
 
-    // export dir
-    // vergiliusproject.com
    __uint64_t  _funcNamesCount=(exportDirBase+24);
    DWORD funcNamesCount=0;
    ReadProcessMemory(
@@ -208,11 +216,123 @@ void resolveCore(
 
 
    // exports 
-   __uint64_t functionNamesList=(__uint64_t)(imageBase+rva_addr_names);
-   __uint64_t ordinalsNameList=(__uint64_t)(imageBase+rva_addr_name_ordinals);
-   __uint64_t functionsAddrList=(__uint64_t)(imageBase+rva_addr_functions);
+   __uint64_t functionNamesList=(__uint64_t)(imageBase+rva_addr_names); // ls of rva s 
+   __uint64_t ordinalsNameList=(__uint64_t)(imageBase+rva_addr_name_ordinals); 
+   __uint64_t functionsAddrList=(__uint64_t)(imageBase+rva_addr_functions); // ls of rvas
+
+   __uint64_t offset=imp_name_table;
+   int index=0;
+   while(true){
+    __uint64_t slot=imp_addr_table+index;
+    unsigned int rva_to_name=0; // rva to {word hint, char*name}
+    if(!ReadProcessMemory(
+        proc,
+        (void*)(offset), // +index?
+        &rva_to_name.
+        sizeof(unsigned int),
+        NULL
+    ))
+        exit(1);
+    if(!rva_to_name)
+        break;
+    __uint64_t _hint=imageBase_imports+rva_to_name; // {word,char*}
+    WORD hint=0; // useful in export
+    ReadProcessMemory(
+        proc,
+        (void*)_hint,
+        &hint,
+        sizeof(WORD),
+        NULL
+    );
+    if(!hint)
+        exit(1);
+    __uint64_t _name=imageBase_imports+rva_to_name+sizeof(WORD);
+    char nameStr[128];
+    ReadRemoteString(proc,_name,nameStr);
+    
+  __uint64_t __exp_func_name_rva=functionNamesList+hint; // ls of rvas
+  __uint64_t exp_func_name_rva=0;
+  ReadProcessMemory(
+    proc,
+    (void*)__exp_func_name_rva,
+    &exp_func_name_rva,
+    sizeof(DWORD),
+    NULL
+  );
+
+  __uint64_t targFuncNameBaseRemote=imageBase+exp_func_name_rva;
+  char targetFuncName[128];
+  ReadRemoteString(proc,targFuncNameBaseRemote,targetFuncName);
+
+  if(strcmp(nameStr,targetFuncName)!=0)
+    return false;
+
+  
+  WORD indexToAddrList=0;
+  ReadProcessMemory(
+    proc,
+    (void*)(ordinalsNameList+hint),
+    &indexToAddrList,
+    sizeof(WORD),
+    NULL
+  );
+
+  DWORD funcAddrRva=0;
+  ReadProcessMemory(
+    proc,
+    (void*)(functionsAddrList+indexToAddrList),
+    &funcAddrRva,
+    sizeof(DWORD),
+    NULL
+);
+  __uint64_t funcAddr=0;
+  ReadProcessMemory(
+    proc,
+    (void*)(imageBase+funcAddrRva),
+    &funcAddr,
+    sizeof(unsigned long long),
+    NULL
+  );
+
+  if(!funcAddr || !funcAddrRva || !indexToAddrList){
+    printf("[-] 305\n");
+    exit(1);
+  }
+
+  WriteProcessMemory(
+    proc,
+    (void*)slot,
+    &funcAddr,
+    sizeof(unsigned long long),
+    NULL
+  );
+    
+  printf("resolved function %s\n",nameStr);
+
+  offset+=sizeof(DWORD);
+  index++;
+}
+   
+
+
+}
 
 
 
+void resolveVirtuals(
+    HANDLE proc,
+    __uint64_t imp_addr_table,
+    __uint64_t imp_name_table,
+    BYTE* imageBase,
+    DLL** injected_ls,
+    int injected_c
+){
 
+    for(int k=0;k<injected_c;k++){
+        char* dllName=injected_ls[k]->dll_name;
+        __uint64_t dll_base=injected_ls[k]->dll_base;
+        __uint64_t expDirBase=injected_ls[k]->exportDirBase;
+        
+
+    }
 }

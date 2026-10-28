@@ -73,7 +73,9 @@ extern __uint64_t injectDLL(
       }      
       
       *injectedC=mappedDLLsCount;
-      return (__uint64_t)__lls;
+      if(mappedDLLsCount==1)
+        return (__uint64_t)(*__lls);
+      return (__uint64_t)__lls
 
     }
     else 

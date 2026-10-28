@@ -310,11 +310,24 @@ extern void dumpLoadedDlls(DLL* dllList,size_t* count){
 
 
 extern DLL* isDllLoaded(char* dll,DLL* loaded_list,size_t* count){
-    DLL zero={0};
     for(unsigned int i=0;i<*count;i++)
         if(strcmp(dll,loaded_list[i].dll_name)==0)
             return (DLL*)((DLL*)loaded_list+i);
     return NULL;
+
+}
+
+extern void ReadRemoteString(HANDLE proc,__uint64_t remoteAddr,char* local){
+    int readChar=0;
+    while (true)
+    {
+        char c='';
+        ReadProcessMemory(proc,(void*)(remoteAddr),&c,sizeof(char),NULL);
+        *(local+readChar)=c;
+        if(!c)
+            break;
+        readChar++;
+    }
 
 }
 
