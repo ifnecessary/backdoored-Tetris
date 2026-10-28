@@ -50,6 +50,7 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
 
     unsigned int import_dd_count=import_dd_sz/20;
     
+    // l through imports to resolve
     while(true){
         unsigned long rva_import_name_table=0;
         unsigned long rva_iat=0;
@@ -115,21 +116,31 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
        
         // import_name_table *
         // import_address_table *
-        if(isDllLoaded(__dll__name,*loadedDlls,count)){
-        
-            __uint64_t expTable=extractImageExportTableBase_LS(__dll__name,*loadedDlls);
-            resolveCore(proc,import_address_table,import_name_table,expTable);
-
-        }
+        DLL *__loaded_dll__=isDllLoaded(__dll__name,*loadedDlls,count);
+        if(__loaded_dll__)
+            resolveCore(
+                proc,
+                (__uint64_t)(__loaded_dll__->dll_base),
+                (__uint64_t)imageBase,
+                import_address_table,
+                import_name_table,
+                __loaded_dll__->exportDirBase
+            );
         else
         {
             printf("%s is not loaded so injectDLL()\n",__dll__name);
-            int exportedDirBaseCount=0;
-            __uint64_t* exportDirBases=injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&exportedDirBaseCount);
-            for(int __0x0x0xBOOOOOOO=0;__0x0x0xBOOOOOOO<exportedDirBaseCount;__0x0x0xBOOOOOOO++){
-                __uint64_t expTable=exportDirBases[__0x0x0xBOOOOOOO];
-                resolveCore(proc,import_address_table,import_name_table,expTable);
-                
+            int injectedCount=0;
+            // for dlls <--> virtual dll, injectdll must return list of real injected dll(s)(might be >1).
+            __uint64_t __injected__ =injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&injectedCount);
+            if(injectedCount==1)
+            {
+                // resolving classic dll
+                DLL* _x_=(DLL*)__injected__;
+            }
+            else if(injectedCount>1){
+                // resolving classic dll list given by api set virtual dlls
+                DLL** _x_=(DLL**)__injected__;
+
             }
         }
 
@@ -140,9 +151,68 @@ extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageB
 }
 
 
-void resolveCore(HANDLE proc,__uint64_t imp_addr_table,__uint64_t imp_name_table,__uint64_t exportDirBase){
-    // imp_name_table is list of rva s to procedure name
+void resolveCore(
+    HANDLE proc,
+    __uint64_t imageBase, // export source
+    __uint64_t imageBase_imports, // import source
+    __uint64_t imp_addr_table,
+    __uint64_t imp_name_table,
+    __uint64_t exportDirBase
+)
+{
+    // imp_name_table is list of rvas. 
+    // each rva (from base of image contain iat) to struct {word hint; char* name}
     // imp_addr_table is list of slots where addr of function should be written
-    
+    // export dir base {rva,size} rva to IMAGE_EXPORT_DIRECTORY STRUCTUE
+
+    // export dir
+    // vergiliusproject.com
+   __uint64_t  _funcNamesCount=(exportDirBase+24);
+   DWORD funcNamesCount=0;
+   ReadProcessMemory(
+    proc,
+    (void*)_funcNamesCount,
+    &funcNamesCount,
+    sizeof(DWORD),
+    NULL
+   );
+
+   __uint64_t  _rva_addr_names=(exportDirBase+32);
+   DWORD rva_addr_names=0;
+   ReadProcessMemory(
+    proc,
+    (void*)_rva_addr_names,
+    &rva_addr_names,
+    sizeof(DWORD),
+    NULL
+   );
+   __uint64_t _rva_addr_name_ordinals=(exportDirBase+36);
+   DWORD rva_addr_name_ordinals=0;
+   ReadProcessMemory(
+    proc,
+    (void*)_rva_addr_name_ordinals,
+    &rva_addr_name_ordinals,
+    sizeof(DWORD),
+    NULL
+   );
+
+   __uint64_t _rva_addr_functions=(exportDirBase+28);
+   DWORD rva_addr_functions=0;
+   ReadProcessMemory(
+    proc,
+    (void*)_rva_addr_functions,
+    &rva_addr_functions,
+    sizeof(DWORD),
+    NULL
+   );
+
+
+   // exports 
+   __uint64_t functionNamesList=(__uint64_t)(imageBase+rva_addr_names);
+   __uint64_t ordinalsNameList=(__uint64_t)(imageBase+rva_addr_name_ordinals);
+   __uint64_t functionsAddrList=(__uint64_t)(imageBase+rva_addr_functions);
+
+
+
 
 }

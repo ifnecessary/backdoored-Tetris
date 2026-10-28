@@ -12,13 +12,13 @@
 char** extractMapping4VirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*,unsigned int*);
 bool compare(char*,char*);
 
-extern __uint64_t* injectDLL(
+extern __uint64_t injectDLL(
     HANDLE proc,
     PROCESS_BASIC_INFORMATION pinfo,
     char* dll,
     DLL** loadedDlls,
     size_t* count,
-    int* exportedDirBaseCount
+    int* injectedC
 )
     {
 
@@ -46,36 +46,34 @@ extern __uint64_t* injectDLL(
     {   // vergiliusproject.com 
       printf("file  does not exist on disk so calling extractMapping4VirtualDll()\n");
        int mappedDLLsCount=0;
-      // mapped dlls list (could be only one or more)
       char** realDllsList=extractMapping4VirtualDll(proc,pinfo,dll,&mappedDLLsCount);
-      // exported directory bases of inejcted dlls
-      if(!mappedDLLsCount){
-        printf("could not find virtual --- real dll mapping on system!\n");
+      if(!mappedDLLsCount)
         exit(1);
-      }
-      
-      
-      __uint64_t *exportDirBases=(__uint64_t*)malloc(sizeof(__uint64_t)*mappedDLLsCount);
-      
+      // here
+      DLL**__lls=(DLL**)malloc(sizeof(DLL*)*mappedDLLsCount);
       for(unsigned int ifnece=0;ifnece<mappedDLLsCount;ifnece++){
         char* targetDll_=realDllsList[ifnece];
-        if(isDllLoaded(targetDll_,*loadedDlls,count)){
-            printf("%s is already loaded so skipping for injection\n",targetDll_);
-            *exportDirBases=(__uint64_t)extractImageExportTableBase_LS(targetDll_,*loadedDlls);
+
+        DLL* __loaded_ll=isDllLoaded(targetDll_,*loadedDlls,count);
+        if(__loaded_ll){
+            __lls[ifnece]=__loaded_ll;
             continue;
         }
-        __uint64_t *exportDirBase=injectDLL(
+        // ptr to heap
+        int tempC=0;
+        DLL* __ll=(DLL*)injectDLL(
             proc,
             pinfo,
             realDllsList[ifnece],
             loadedDlls,
             count,
-            exportedDirBaseCount
+            &tempC
         );
-        exportDirBases[ifnece]=(__uint64_t)(*exportDirBase);
+        __lls[ifnece]=__ll;
       }      
-
-      return exportDirBases;
+      
+      *injectedC=mappedDLLsCount;
+      return (__uint64_t)__lls;
 
     }
     else 
@@ -105,20 +103,16 @@ extern __uint64_t* injectDLL(
     printf("updated loaded dll list:\n");
     // till this point works.
 
-    __uint64_t *exportDirBase=(__uint64_t*)malloc(sizeof(__uint64_t));
     
-    *exportDirBase=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
+   __uint64_t exportDirBase=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
 
-    syncLoadedDlls(dll,*exportDirBase,loadedDlls,count);
+    syncLoadedDlls(dll,(__uint64_t)dllBase,exportDirBase,loadedDlls,count);
     dumpLoadedDlls(*loadedDlls,count);
     printf("is about to resolve IAT!\n");
     resolveIAT(proc,pinfo,dllBase,loadedDlls,count,dll);
-    
+    ++(*injectedC);
    
-    ++(*exportedDirBaseCount);
-   
-    //  add to local db 
-    return exportDirBase;
+    return (__uint64_t)(*loadedDlls+(*count-1));
     
 }
 
@@ -175,8 +169,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
 
         __uint64_t entry=_api_set+entry_offset;
 
-        printf("API SET COUNT IS %lu\n",api_set_count);
-        // loop never reaches execution 
+        // l-t-v-dlls
         for(unsigned long i=0;i<api_set_count;i++)
         {
 
@@ -222,10 +215,7 @@ char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,cha
                 else
                     virtual_dll_name_char[i]='\0';
             
-            // formt is dll_name-x-y-z (z should be ignored)
-            // virtual dll  --> specific dll with specific build
-            // it is better to compare hashes but leaving for simplicity
-            // read notes on code. needs fix here
+            // comparing target VIRTUAL to current Virtual
             if(!compare(targetDll,virtual_dll_name_char)){
                  entry+=sizeof(API_SET_NAMESPACE_ENTRY);
                  continue;

