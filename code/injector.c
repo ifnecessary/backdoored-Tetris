@@ -2,6 +2,7 @@
 #include <ntdll_imit.h>
 #include <tetris.h>
 #include <wchar.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -9,316 +10,300 @@
 // you want to inject dll to remote process but you cannot use high level apis like LoadLibary().
 // inject DlL manually maps dll to remote process address space + resolves its IAT (injects all dependency dlls and resolves their IATS as well)
 
-char** extractMapping4VirtualDll(HANDLE,PROCESS_BASIC_INFORMATION,char*,unsigned int*);
-bool compare(char*,char*);
+char **extractMapping4VirtualDll(HANDLE, PROCESS_BASIC_INFORMATION, char *, unsigned int *);
+bool compare(char *, char *);
 
 extern __uint64_t injectDLL(
     HANDLE proc,
     PROCESS_BASIC_INFORMATION pinfo,
-    char* dll,
-    DLL** loadedDlls,
-    size_t* count,
-    int* injectedC
-)
-    {
+    char *dll,
+    DLL **loadedDlls,
+    size_t *count,
+    int *injectedC)
+{
 
-    printf("injecDll() started execution for %s!\n",dll);
+    printf("injecDll() started execution for %s!\n", dll);
 
-  
+    char *searchDirectory = "C:\\Windows\\System32\\";
+    char *dll_file = calloc(strlen(searchDirectory) + strlen(dll) + 1, sizeof(char));
+    strcpy(dll_file, searchDirectory);
+    strcat(dll_file, dll);
 
-    char* searchDirectory="C:\\Windows\\System32\\";
-    char* dll_file=calloc(strlen(searchDirectory)+strlen(dll)+1,sizeof(char));
-    strcpy(dll_file,searchDirectory);
-    strcat(dll_file,dll);
-    
-
-    HANDLE hDll=CreateFileA(
+    HANDLE hDll = CreateFileA(
         dll_file,
         GENERIC_READ,
         FILE_SHARE_READ,
         NULL,
         OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
-    
-    if(hDll==INVALID_HANDLE_VALUE)
-    {   // vergiliusproject.com 
-      printf("file  does not exist on disk so calling extractMapping4VirtualDll()\n");
-       int mappedDLLsCount=0;
-      char** realDllsList=extractMapping4VirtualDll(proc,pinfo,dll,&mappedDLLsCount);
-      if(!mappedDLLsCount)
-        exit(1);
-      // here
-      DLL**__lls=(DLL**)malloc(sizeof(DLL*)*mappedDLLsCount);
-      for(unsigned int ifnece=0;ifnece<mappedDLLsCount;ifnece++){
-        char* targetDll_=realDllsList[ifnece];
+        NULL);
 
-        DLL* __loaded_ll=isDllLoaded(targetDll_,*loadedDlls,count);
-        if(__loaded_ll){
-            __lls[ifnece]=__loaded_ll;
-            continue;
-        }
-        // ptr to heap
-        int tempC=0;
-        DLL* __ll=(DLL*)injectDLL(
-            proc,
-            pinfo,
-            realDllsList[ifnece],
-            loadedDlls,
-            count,
-            &tempC
-        );
-        __lls[ifnece]=__ll;
-      }      
-      
-      *injectedC=mappedDLLsCount;
-      if(mappedDLLsCount==1)
-        return (__uint64_t)(*__lls);
-      return (__uint64_t)__lls
-
-    }
-    else 
-    {
-    DWORD onDiskSz=GetFileSize(hDll,NULL);
-    char* dll_buff=(char*)malloc(onDiskSz);
-    if(!ReadFile(
-        hDll,
-        dll_buff,
-        onDiskSz,
-        NULL,
-        NULL
-    )){
-        printf("[-] 337 failed to read dll file\n");
-        exit(1);
-    }
-
-    MappingMetadata dll_mm=PEParser(dll_buff);
-    IMAGE_SECTION_HEADER* dll_relloc=NULL;
-    BYTE* dllBase=(BYTE*)mapRoutineX(proc,dll_mm,&dll_relloc);
-    if(dllBase)
-        printf("DLL: %s has been mapped successfully!/n",dll);
-
-    // if(dll_relloc)
-    //     rellocate(proc,dllBase,(void*)dll_mm.heapBase,(void*)dll_mm.preferedBase,dll_relloc);
-
-    printf("updated loaded dll list:\n");
-    // till this point works.
-
-    
-   __uint64_t exportDirBase=(__uint64_t)((__uint64_t)dllBase+(dll_mm.dataDirectoryList+IMAGE_DIRECTORY_ENTRY_EXPORT));
-
-    syncLoadedDlls(dll,(__uint64_t)dllBase,exportDirBase,loadedDlls,count);
-    dumpLoadedDlls(*loadedDlls,count);
-    printf("is about to resolve IAT!\n");
-    resolveIAT(proc,pinfo,dllBase,loadedDlls,count,dll);
-    ++(*injectedC);
-   
-    return (__uint64_t)(*loadedDlls+(*count-1));
-    
-}
-
-}
-
-
-
-// by virtual dll i mean api set dlls which actuaally get to be mapped to real dll existing on disk 
-char** extractMapping4VirtualDll(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo,char* dll,unsigned int* mappedDllsCount){
-        
-        char** mappedDLls=(char**)malloc(sizeof(char*));
-        *mappedDLls=NULL;
-        size_t targetDllSz=strlen(dll);
-        // format will be some-dll-name-x-y-z
-        char targetDll[targetDllSz+1];
-        targetDll[targetDllSz]='\0';
-        strcpy(targetDll,dll);
-        *strrchr(targetDll,'.')='\0';
-
-        __uint64_t _peb=(__uint64_t)pinfo.PebBaseAddress;
-        __uint64_t __api_set=_peb+0x68; // API_SET_NAMESPACE
-        __uint64_t _api_set=0;
-        ReadProcessMemory(
-            proc,
-            (void*)__api_set,
-            &_api_set,
-            sizeof(unsigned long long),
-            NULL
-        );
-        if(_api_set==0)
+    if (hDll == INVALID_HANDLE_VALUE)
+    { // vergiliusproject.com
+        printf("file  does not exist on disk so calling extractMapping4VirtualDll()\n");
+        int mappedDLLsCount = 0;
+        char **realDllsList = extractMapping4VirtualDll(proc, pinfo, dll, &mappedDLLsCount);
+        if (!mappedDLLsCount)
             exit(1);
-        __uint64_t _api_set_count=(__uint64_t)_api_set+(sizeof(unsigned long)*3);
-        __uint64_t _api_set_entry_offset=(__uint64_t)_api_set+(sizeof(unsigned long)*4);
-        
-        unsigned long api_set_count=0;
-        unsigned long entry_offset=0;
-        if(!ReadProcessMemory(
+        // here
+        DLL **__lls = (DLL **)malloc(sizeof(DLL *) * mappedDLLsCount);
+        for (unsigned int ifnece = 0; ifnece < mappedDLLsCount; ifnece++)
+        {
+            char *targetDll_ = realDllsList[ifnece];
+
+            DLL *__loaded_ll = isDllLoaded(targetDll_, *loadedDlls, count);
+            if (__loaded_ll)
+            {
+                __lls[ifnece] = __loaded_ll;
+                continue;
+            }
+            // ptr to heap
+            int tempC = 0;
+            DLL *__ll = (DLL *)injectDLL(
+                proc,
+                pinfo,
+                realDllsList[ifnece],
+                loadedDlls,
+                count,
+                &tempC);
+            __lls[ifnece] = __ll;
+        }
+
+        *injectedC = mappedDLLsCount;
+        if (mappedDLLsCount == 1)
+            return (__uint64_t)(*__lls);
+        return (__uint64_t)__lls;
+    }
+    else
+    {
+        DWORD onDiskSz = GetFileSize(hDll, NULL);
+        char *dll_buff = (char *)malloc(onDiskSz);
+        if (!ReadFile(
+                hDll,
+                dll_buff,
+                onDiskSz,
+                NULL,
+                NULL))
+        {
+            printf("[-] 337 failed to read dll file\n");
+            exit(1);
+        }
+
+        MappingMetadata dll_mm = PEParser(dll_buff);
+        IMAGE_SECTION_HEADER *dll_relloc = NULL;
+        BYTE *dllBase = (BYTE *)mapRoutineX(proc, dll_mm, &dll_relloc);
+        if (dllBase)
+            printf("DLL: %s has been mapped successfully!/n", dll);
+
+        // if (dll_relloc)
+        //     rellocate(proc, dllBase, (void *)dll_mm.heapBase, (void *)dll_mm.preferedBase, dll_relloc);
+
+        printf("updated loaded dll list:\n");
+        // till this point works.
+        // -> heap
+        IMAGE_DATA_DIRECTORY *ded = (IMAGE_DATA_DIRECTORY *)(dll_mm.dataDirectoryList + IMAGE_DIRECTORY_ENTRY_EXPORT * 8);
+        __uint64_t exportDirBase = (__uint64_t)((__uint64_t)dllBase + ded->VirtualAddress);
+
+        syncLoadedDlls(dll, (__uint64_t)dllBase, exportDirBase, loadedDlls, count);
+        dumpLoadedDlls(*loadedDlls, count);
+        printf("is about to resolve IAT!\n");
+        resolveIAT(proc, pinfo, dllBase, loadedDlls, count, dll);
+        ++(*injectedC);
+
+        return (__uint64_t)(*loadedDlls + (*count - 1));
+    }
+}
+
+// by virtual dll i mean api set dlls which actuaally get to be mapped to real dll existing on disk
+char **extractMapping4VirtualDll(HANDLE proc, PROCESS_BASIC_INFORMATION pinfo, char *dll, unsigned int *mappedDllsCount)
+{
+
+    char **mappedDLls = (char **)malloc(sizeof(char *));
+    *mappedDLls = NULL;
+    size_t targetDllSz = strlen(dll);
+    // format will be some-dll-name-x-y-z
+    char targetDll[targetDllSz + 1];
+    targetDll[targetDllSz] = '\0';
+    strcpy(targetDll, dll);
+    *strrchr(targetDll, '.') = '\0';
+
+    __uint64_t _peb = (__uint64_t)pinfo.PebBaseAddress;
+    __uint64_t __api_set = _peb + 0x68; // API_SET_NAMESPACE
+    __uint64_t _api_set = 0;
+    ReadProcessMemory(
+        proc,
+        (void *)__api_set,
+        &_api_set,
+        sizeof(unsigned long long),
+        NULL);
+    if (_api_set == 0)
+        exit(1);
+    __uint64_t _api_set_count = (__uint64_t)_api_set + (sizeof(unsigned long) * 3);
+    __uint64_t _api_set_entry_offset = (__uint64_t)_api_set + (sizeof(unsigned long) * 4);
+
+    unsigned long api_set_count = 0;
+    unsigned long entry_offset = 0;
+    if (!ReadProcessMemory(
             proc,
-            (void*)_api_set_count,
+            (void *)_api_set_count,
             &api_set_count,
             sizeof(unsigned long),
-            NULL
-        ) || !ReadProcessMemory(
-             proc,
-            (void*)_api_set_entry_offset,
+            NULL) ||
+        !ReadProcessMemory(
+            proc,
+            (void *)_api_set_entry_offset,
             &entry_offset,
             sizeof(unsigned long),
-            NULL
-        ))
+            NULL))
+    {
+        printf("[-52] INJECTOR\n");
+        exit(1);
+    }
+
+    __uint64_t entry = _api_set + entry_offset;
+
+    // l-t-v-dlls
+    for (unsigned long i = 0; i < api_set_count; i++)
+    {
+
+        __uint64_t _api_set_name_offs = entry + sizeof(unsigned long);
+        unsigned long api_set_name_offs = 0;
+        unsigned long name_length = 0;
+        if (!ReadProcessMemory(
+                proc,
+                (void *)_api_set_name_offs,
+                &api_set_name_offs,
+                sizeof(unsigned long),
+                NULL) ||
+            !ReadProcessMemory(
+                proc,
+                (void *)(entry + (sizeof(unsigned long) * 2)),
+                &name_length,
+                sizeof(unsigned long),
+                NULL))
         {
-            printf("[-52] INJECTOR\n");
+            printf("[-78] injec\n");
             exit(1);
         }
 
-        __uint64_t entry=_api_set+entry_offset;
+        size_t length = name_length / sizeof(wchar_t);
 
-        // l-t-v-dlls
-        for(unsigned long i=0;i<api_set_count;i++)
+        wchar_t virtual_dll_name[length + 1];
+        virtual_dll_name[length] = '\0';
+        ReadProcessMemory(
+            proc,
+            (void *)(_api_set + api_set_name_offs),
+            virtual_dll_name,
+            name_length,
+            NULL);
+
+        // format is dll-some-name-x-y-z
+        char virtual_dll_name_char[length + 1];
+        for (size_t i = 0; i <= length; i++)
+            if (i != length)
+                virtual_dll_name_char[i] = (char)(virtual_dll_name[i]);
+            else
+                virtual_dll_name_char[i] = '\0';
+
+        // comparing target VIRTUAL to current Virtual
+        if (!compare(targetDll, virtual_dll_name_char))
         {
+            entry += sizeof(API_SET_NAMESPACE_ENTRY);
+            continue;
+        }
 
-           __uint64_t _api_set_name_offs=entry+sizeof(unsigned long);
-           unsigned long api_set_name_offs=0;
-           unsigned long name_length=0;
-           if(!ReadProcessMemory(
+        __uint64_t _value_offset = entry + (sizeof(unsigned long) * 4);
+        unsigned long dll_list_offset = 0;
+        unsigned long dll_count = 0;
+
+        if (!ReadProcessMemory(
                 proc,
-                (void*)_api_set_name_offs,
-                &api_set_name_offs,
-                sizeof(unsigned long),
-                NULL
-            ) || 
-            !ReadProcessMemory(
-                proc,
-                (void*)(entry+(sizeof(unsigned long)*2)),
-                &name_length,
-                sizeof(unsigned long),
-                NULL
-            ))
-            {
-                printf("[-78] injec\n");
-                exit(1);
-            }
-
-            size_t length=name_length/sizeof(wchar_t);
-
-            wchar_t virtual_dll_name[length+1];
-            virtual_dll_name[length]='\0';
-            ReadProcessMemory(
-                proc,
-                (void*)(_api_set+api_set_name_offs),
-                virtual_dll_name,
-                name_length,
-                NULL
-            );
-
-            // format is dll-some-name-x-y-z
-            char virtual_dll_name_char[length+1];
-            for(size_t i=0;i<=length;i++)
-                if(i!=length)    
-                    virtual_dll_name_char[i]=(char)(virtual_dll_name[i]);
-                else
-                    virtual_dll_name_char[i]='\0';
-            
-            // comparing target VIRTUAL to current Virtual
-            if(!compare(targetDll,virtual_dll_name_char)){
-                 entry+=sizeof(API_SET_NAMESPACE_ENTRY);
-                 continue;
-            }
-            
-            __uint64_t _value_offset=entry+(sizeof(unsigned long)*4);
-            unsigned long dll_list_offset=0;
-            unsigned long dll_count=0;
-
-           if(!ReadProcessMemory(
-                proc,
-                (void*)_value_offset,
+                (void *)_value_offset,
                 &dll_list_offset,
                 sizeof(unsigned long),
-                NULL
-            ) || 
-            
+                NULL) ||
+
             !ReadProcessMemory(
                 proc,
-                (void*)(entry+(sizeof(unsigned long)*5)),
+                (void *)(entry + (sizeof(unsigned long) * 5)),
                 &dll_count,
                 sizeof(unsigned long),
-                NULL
-            )
-        )
+                NULL))
         {
             printf("[-145] injector\n");
             exit(1);
         }
 
         // *is dll_list_offset offset from entry or base*
-        __uint64_t _api_set_value_entry=(__uint64_t)(_api_set+dll_list_offset);
-        
-        for(unsigned int i=0;i<dll_count;i++){
-          __uint64_t _og_dll_name_offs=(__uint64_t)(_api_set_value_entry+(sizeof(unsigned long)*3));
-          unsigned long  og_dll_name_sz=0;
-          __uint64_t og_dll_name_offs=0; // offs from schema base
+        __uint64_t _api_set_value_entry = (__uint64_t)(_api_set + dll_list_offset);
 
-          if(!ReadProcessMemory(
-                proc,
-                (void*)_og_dll_name_offs,
-                &og_dll_name_offs,
-                sizeof(unsigned long),
-                NULL
-            ) || !ReadProcessMemory(
+        for (unsigned int i = 0; i < dll_count; i++)
+        {
+            __uint64_t _og_dll_name_offs = (__uint64_t)(_api_set_value_entry + (sizeof(unsigned long) * 3));
+            unsigned long og_dll_name_sz = 0;
+            __uint64_t og_dll_name_offs = 0; // offs from schema base
+
+            if (!ReadProcessMemory(
                     proc,
-                    (void*)(_api_set_value_entry+(sizeof(unsigned long)*4)),
+                    (void *)_og_dll_name_offs,
+                    &og_dll_name_offs,
+                    sizeof(unsigned long),
+                    NULL) ||
+                !ReadProcessMemory(
+                    proc,
+                    (void *)(_api_set_value_entry + (sizeof(unsigned long) * 4)),
                     &og_dll_name_sz,
                     sizeof(unsigned long),
-                    NULL
-            ))
+                    NULL))
             {
                 printf("[-170] injector\n");
                 exit(1);
             }
 
-            size_t og_dll_name_length=og_dll_name_sz/sizeof(wchar_t);
-            wchar_t og_dll[og_dll_name_length+1];
-            og_dll[og_dll_name_length]='\0';
+            size_t og_dll_name_length = og_dll_name_sz / sizeof(wchar_t);
+            wchar_t og_dll[og_dll_name_length + 1];
+            og_dll[og_dll_name_length] = '\0';
 
-            if(!ReadProcessMemory(
-                proc,
-                (void*)(_api_set+og_dll_name_offs),
-                og_dll,
-                og_dll_name_sz,
-                NULL
-            )){
+            if (!ReadProcessMemory(
+                    proc,
+                    (void *)(_api_set + og_dll_name_offs),
+                    og_dll,
+                    og_dll_name_sz,
+                    NULL))
+            {
                 printf("[- 286] \n");
                 exit(1);
             }
 
-            char* real_dll=(char*)malloc(sizeof(char)*og_dll_name_length+1);
-            real_dll[og_dll_name_length]='\0';
-            for(size_t k=0;k<og_dll_name_length;k++)
-                real_dll[k]=(char)(og_dll[k]);
+            char *real_dll = (char *)malloc(sizeof(char) * og_dll_name_length + 1);
+            real_dll[og_dll_name_length] = '\0';
+            for (size_t k = 0; k < og_dll_name_length; k++)
+                real_dll[k] = (char)(og_dll[k]);
 
-            printf("---------------- %s maps to %s------------------\n",targetDll,real_dll);
+            printf("---------------- %s maps to %s------------------\n", targetDll, real_dll);
 
-        
-            char** tmp=realloc(mappedDLls,sizeof(char*)*((*mappedDllsCount)+1));
-            if(tmp!=NULL){
-                mappedDLls=tmp;
-                tmp=NULL;
+            char **tmp = realloc(mappedDLls, sizeof(char *) * ((*mappedDllsCount) + 1));
+            if (tmp != NULL)
+            {
+                mappedDLls = tmp;
+                tmp = NULL;
             }
             ++(*mappedDllsCount);
-            mappedDLls[*mappedDllsCount-1]=real_dll;
+            mappedDLls[*mappedDllsCount - 1] = real_dll;
 
-            _api_set_value_entry+=sizeof(API_SET_VALUE_ENTRY);
-
+            _api_set_value_entry += sizeof(API_SET_VALUE_ENTRY);
         }
-            
+
         return mappedDLls;
     }
     return mappedDLls;
-
 }
 
-bool compare(char* vDll,char*vSystemDll){
-    size_t len=strlen(vDll);
-    bool lastCheck=false;
-    if(strncasecmp(vDll,vSystemDll,len-1)==0)
+bool compare(char *vDll, char *vSystemDll)
+{
+    size_t len = strlen(vDll);
+    bool lastCheck = false;
+    if (strncasecmp(vDll, vSystemDll, len - 1) == 0)
         return true;
     return false;
 }

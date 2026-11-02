@@ -3,336 +3,289 @@
 #include <ntdll_imit.h>
 #include <tetris.h>
 #include <stdio.h>
+#include <stdbool.h>
 
 // works for both main PE and loaded DLLs
-extern void resolveIAT(HANDLE proc,PROCESS_BASIC_INFORMATION pinfo, BYTE* imageBase,DLL** loadedDlls,size_t* count,char* resolvingFor){
-    unsigned long long e_lfanew=(unsigned long long)(imageBase+0x3c);
-    long e_lfanew_val=0;
+extern void resolveIAT(HANDLE proc, PROCESS_BASIC_INFORMATION pinfo, BYTE *imageBase, DLL **loadedDlls, size_t *count, char *resolvingFor)
+{
+    unsigned long long e_lfanew = (unsigned long long)(imageBase + 0x3c);
+    long e_lfanew_val = 0;
     ReadProcessMemory(
         proc,
-        (void*)e_lfanew,
+        (void *)e_lfanew,
         &e_lfanew_val,
         sizeof(long),
-        NULL
-    );
-    unsigned long long nt_headers=(unsigned long long)(imageBase+e_lfanew_val);
-    unsigned long long opt_headers=(unsigned long long)(nt_headers+0x18);
-    unsigned long long dataDirectoryList=(unsigned long long)(opt_headers+0x70);
-    unsigned long imageSz=0;
-    ReadProcessMemory
-    (
-        proc,
-        (void*)(opt_headers+0x38),
-        &imageSz,
-        sizeof(unsigned long),
-        NULL
-    );
+        NULL);
+    unsigned long long nt_headers = (unsigned long long)(imageBase + e_lfanew_val);
+    unsigned long long opt_headers = (unsigned long long)(nt_headers + 0x18);
+    unsigned long long dataDirectoryList = (unsigned long long)(opt_headers + 0x70);
 
-    unsigned long long import_data_directory_ls=(dataDirectoryList+(8*IMAGE_DIRECTORY_ENTRY_IMPORT));
-    unsigned long va_import_data_directory_descr=0;
-    unsigned long import_dd_sz=0;
-
+    unsigned long long import_data_directory = (dataDirectoryList + (8 * IMAGE_DIRECTORY_ENTRY_IMPORT));
+    unsigned long va_image_import_descriptor = 0;
     ReadProcessMemory(
         proc,
-        (void*)(import_data_directory_ls),
-        &va_import_data_directory_descr,
+        (void *)(import_data_directory),
+        &va_image_import_descriptor,
         sizeof(unsigned int),
-        NULL
-    );
-    ReadProcessMemory(
-        proc,
-        (void*)(import_data_directory_ls+0x4),
-        &import_dd_sz,
-        sizeof(unsigned int),
-        NULL
-    );
+        NULL);
 
-    unsigned long long import_descriptor=(unsigned long long)(imageBase+va_import_data_directory_descr);
+    unsigned long long image_import_descriptor = (unsigned long long)(imageBase + va_image_import_descriptor);
 
-    unsigned int import_dd_count=import_dd_sz/20;
-    
     // l through imports to resolve
-    while(true){
-        unsigned long rva_import_name_table=0;
-        unsigned long rva_iat=0;
-        unsigned long rva_name=0;
+    while (true)
+    {
+        unsigned long rva_thunk = 0;
+        unsigned long rva_iat = 0;
+        unsigned long rva_name = 0;
         ReadProcessMemory(
             proc,
-            (void*)(import_descriptor),
-            &rva_import_name_table,
+            (void *)(image_import_descriptor),
+            &rva_thunk,
             sizeof(unsigned long),
-            NULL
-        );
-        if(rva_import_name_table==0 && rva_iat==0)
-            break;
+            NULL);
         ReadProcessMemory(
             proc,
-            (void*)(import_descriptor+16),
+            (void *)(image_import_descriptor + 16),
             &rva_iat,
             sizeof(unsigned long),
-            NULL
-        );
+            NULL);
+
+        if (rva_thunk == 0 || rva_iat == 0)
+            break;
+
         ReadProcessMemory(
             proc,
-            (void*)(import_descriptor+12),
+            (void *)(image_import_descriptor + 12),
             &rva_name,
             sizeof(unsigned long),
-            NULL
-        );
- 
-        unsigned long long import_name_table=(unsigned long long)(imageBase+rva_import_name_table);
-        unsigned long long import_address_table=(unsigned long long)(imageBase+rva_iat);
-        unsigned long long dll_name=(unsigned long long)(imageBase+rva_name);
-        char c='x';
-        int read=0;
-        char *__dll__name=calloc(260,1);
-        while(read<259){
-        ReadProcessMemory(
-            proc,
-            (void*)(dll_name+read),
-            &c,
-            sizeof(char),
-            NULL
-        );
-        *(__dll__name+read)=c;
-        if(c==0)
-            break;
-        read++;
-        }
-        int length=0;
-        for(int i=0;i<260;i++){
-            length++;
-            if(__dll__name[i]==0)
+            NULL);
+
+        unsigned long long import_lookup_table = (unsigned long long)(imageBase + rva_thunk);
+        unsigned long long import_address_table = (unsigned long long)(imageBase + rva_iat);
+        unsigned long long dll_name = (unsigned long long)(imageBase + rva_name);
+
+        char c = 'x';
+        int read = 0;
+        char *__dll__name = calloc(260, 1);
+        while (read < 259)
+        {
+            ReadProcessMemory(
+                proc,
+                (void *)(dll_name + read),
+                &c,
+                sizeof(char),
+                NULL);
+            *(__dll__name + read) = c;
+            ++read;
+            if (c == 0)
                 break;
         }
-        char* _tmp=realloc(__dll__name,length);
-        if(_tmp!=NULL){
-            __dll__name=_tmp;
-            _tmp=NULL;
+        char *_tmp = realloc(__dll__name, read);
+        if (_tmp != NULL)
+        {
+            __dll__name = _tmp;
+            _tmp = NULL;
         }
 
         // dll name format is: name.dll
         lowercase(__dll__name);
-        printf("Resolving for: %s Working on DLL: %s\n",resolvingFor,__dll__name);
-       
+        printf("Resolving for: %s Working on DLL: %s\n", resolvingFor, __dll__name);
+
         // analyze the flow
-        DLL *__loaded_dll__=isDllLoaded(__dll__name,*loadedDlls,count);
-        if(__loaded_dll__)
+        DLL *__loaded_dll__ = isDllLoaded(__dll__name, *loadedDlls, count);
+        if (__loaded_dll__)
+        {
             resolveCore(
                 proc,
                 (__uint64_t)(__loaded_dll__->dll_base),
                 (__uint64_t)imageBase,
                 import_address_table,
-                import_name_table,
-                __loaded_dll__->exportDirBase
-            );
+                import_lookup_table,
+                __loaded_dll__->exportDirBase);
+            printf("-");
+        }
         else
         {
-            printf("%s is not loaded so injectDLL()\n",__dll__name);
-            int injectedCount=0;
+            printf("%s is not loaded so injectDLL()\n", __dll__name);
+            int injectedCount = 0;
             // for dlls <--> virtual dll, injectdll must return list of real injected dll(s)(might be >1).
-            __uint64_t __injected__ =injectDLL(proc,pinfo,__dll__name,loadedDlls,count,&injectedCount);
-            if(injectedCount==1)
+            __uint64_t __injected__ = injectDLL(proc, pinfo, __dll__name, loadedDlls, count, &injectedCount);
+            if (injectedCount == 1)
             {
                 // resolving classic dll
-                DLL* _x_=(DLL*)__injected__;
+                DLL *_x_ = (DLL *)__injected__;
                 resolveCore(
                     proc,
                     _x_->dll_base,
                     (__uint64_t)imageBase,
                     import_address_table,
-                    import_name_table,
-                    _x_->exportDirBase  
-                );
+                    import_lookup_table,
+                    _x_->exportDirBase);
             }
-            else if(injectedCount>1){
-                // resolving classic dll list given by api set virtual dlls
-                DLL** _x_=(DLL**)__injected__;
+            else if (injectedCount > 1)
+            {
+                // resolving classic dll list derived from api set virtual dlls
+                DLL **_x_ = (DLL **)__injected__;
                 resolveVirtuals(
                     proc,
                     import_address_table,
-                    import_name_table,
+                    import_lookup_table,
                     imageBase,
                     _x_,
-                    injectedCount
-                );
+                    injectedCount);
             }
         }
 
-        import_descriptor+=20;
+        image_import_descriptor += 20; // each descriptor = 20 bytes
     }
-
 }
 
-
-bool resolveCore(
+// optimization is mandatory
+void resolveCore(
     HANDLE proc,
-    __uint64_t imageBase, // export source
-    __uint64_t imageBase_imports, // import source
-    __uint64_t imp_addr_table,
-    __uint64_t imp_name_table,
-    __uint64_t exportDirBase
-)
+    __uint64_t exporterDllBase,  // DLL base which exports functions
+    __uint64_t importerDllBase,  // PE/DLL base which is about to import functions
+    __uint64_t imp_addr_table,   // iat
+    __uint64_t imp_lookup_table, // list of 8 byte integers
+    __uint64_t exportDirectory)  // exp dir
 {
 
-   __uint64_t  _funcNamesCount=(exportDirBase+24);
-   DWORD funcNamesCount=0;
-   ReadProcessMemory(
-    proc,
-    (void*)_funcNamesCount,
-    &funcNamesCount,
-    sizeof(DWORD),
-    NULL
-   );
+    DWORD numberOfNames = (DWORD)readRemMem(proc, exportDirectory + 24, sizeof(DWORD));
+    __uint64_t eat = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 28, sizeof(DWORD));
+    __uint64_t ent = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 32, sizeof(DWORD));
+    __uint64_t nameOrdinals = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 36, sizeof(DWORD));
 
-   __uint64_t  _rva_addr_names=(exportDirBase+32);
-   DWORD rva_addr_names=0;
-   ReadProcessMemory(
-    proc,
-    (void*)_rva_addr_names,
-    &rva_addr_names,
-    sizeof(DWORD),
-    NULL
-   );
-   __uint64_t _rva_addr_name_ordinals=(exportDirBase+36);
-   DWORD rva_addr_name_ordinals=0;
-   ReadProcessMemory(
-    proc,
-    (void*)_rva_addr_name_ordinals,
-    &rva_addr_name_ordinals,
-    sizeof(DWORD),
-    NULL
-   );
+    int lookup_index = 0;
+    while (1)
+    {
+        printf("resolve core executing!\n");
+        __uint64_t imp_slot = imp_addr_table + lookup_index * sizeof(unsigned long long);
+        long long lookup_entry = 0;
+        ReadProcessMemory(
+            proc,
+            (void *)(imp_lookup_table + lookup_index * sizeof(long long)),
+            &lookup_entry,
+            sizeof(long long),
+            NULL);
 
-   __uint64_t _rva_addr_functions=(exportDirBase+28);
-   DWORD rva_addr_functions=0;
-   ReadProcessMemory(
-    proc,
-    (void*)_rva_addr_functions,
-    &rva_addr_functions,
-    sizeof(DWORD),
-    NULL
-   );
+        if (!lookup_entry)
+        {
+            printf("look up entry value: %ll\n", lookup_entry);
+            break;
+        }
+        // checking look up type: by name or by ordinal
+        if (lookup_entry & 0x8000000000000000ULL)
+        {
+            // by ordinal
+            printf("resolving by ordinal\n");
+            WORD ordinal = (WORD)(lookup_entry & 0xFFFF);
+            DWORD starting_ordinal = 0;
+            ReadProcessMemory(
+                proc,
+                (void *)(exportDirectory + 16),
+                &starting_ordinal,
+                sizeof(DWORD),
+                NULL);
+            DWORD position = ordinal - starting_ordinal;
+            // into consideration wether it is forwarder
+            DWORD func_rva = (DWORD)readRemMem(proc, eat + position * sizeof(DWORD), sizeof(DWORD));
+            __uint64_t func_abs = exporterDllBase + func_rva;
+            WriteProcessMemory(
+                proc,
+                (void *)imp_slot,
+                &func_abs,
+                sizeof(__uint64_t),
+                NULL);
+            // resolved
+        }
+        else
+        {
+            // by name
+            // rva to {word hint,dword name}
+            printf("resolving by name\n");
+            DWORD rva = (DWORD)(lookup_entry & 0xFFFFFFFFULL);
+            __uint64_t imp_by_name_obj = importerDllBase + rva; // {word hint,char* name};
+            // hint is optimiztation for lookup / index n exp_name_table
+            WORD hint = (WORD)readRemMem(proc, (__uint64_t)imp_by_name_obj, sizeof(WORD));
+            char importedProcedureName[128] = {0};
+            ReadRemoteString(proc, (__uint64_t)(imp_by_name_obj + 2), importedProcedureName);
+            printf("[RESOLVING!] WORKING TO RESOLVE IMPORTED FUNCTION: %s\n", importedProcedureName);
+            // first try resolving by hint. if not then by name. later implement imp by forwarder handler
+            DWORD nameRva = 0;
+            char exportedProcedureName[128] = {0};
+            DWORD exp_lookup_index = 0;
+            if (hint < numberOfNames)
+            {
+                nameRva = (DWORD)readRemMem(proc, ent + hint * sizeof(DWORD), sizeof(DWORD));
+                ReadRemoteString(proc, exporterDllBase + nameRva, exportedProcedureName);
+                printf("vadareb by HINT: %s -- %s\n", importedProcedureName, exportedProcedureName);
+                if (strcasecmp(importedProcedureName, exportedProcedureName) == 0)
+                    exp_lookup_index = hint;
+            }
 
+            if (!exp_lookup_index)
+                for (DWORD i = 0; i < numberOfNames; i++)
+                {
+                    nameRva = (DWORD)readRemMem(proc, ent + i * sizeof(DWORD), sizeof(DWORD));
+                    // read remote string requires update
+                    ReadRemoteString(proc, exporterDllBase + nameRva, exportedProcedureName);
+                    // in consideration: forwarded chain case
+                    printf("%s vadareb exported %s\n", importedProcedureName, exportedProcedureName);
+                    // switch to binary comparison
+                    if (strcasecmp(importedProcedureName, exportedProcedureName) != 0)
+                        continue;
+                    exp_lookup_index = i;
+                    break;
+                }
 
-   // exports 
-   __uint64_t functionNamesList=(__uint64_t)(imageBase+rva_addr_names); // ls of rva s 
-   __uint64_t ordinalsNameList=(__uint64_t)(imageBase+rva_addr_name_ordinals); 
-   __uint64_t functionsAddrList=(__uint64_t)(imageBase+rva_addr_functions); // ls of rvas
+            if (!exp_lookup_index)
+            {
+                // if working on list of dlls and dll is not last ignore
+                // if last or only one, throw error
+                printf("resolve does not exist for %s\n", importedProcedureName);
+                // break;
+            }
+            WORD ordinal = (WORD)readRemMem(proc, nameOrdinals + exp_lookup_index * sizeof(WORD), sizeof(WORD));
+            DWORD func_rva = (DWORD)readRemMem(proc, eat + ordinal * sizeof(DWORD), sizeof(DWORD));
+            __uint64_t func_abs = exporterDllBase + func_rva;
+            if (!WriteProcessMemory(
+                    proc,
+                    (void *)imp_slot,
+                    &func_abs,
+                    sizeof(__uint64_t),
+                    NULL))
+            {
+                printf("FAILED TO RESOLVE, ERROR CODE: %llu\n", GetLastError());
+                exit(1);
+            }
+            printf("FUNCTION: %s has been resolved successfully. mapping is %s\n!", importedProcedureName, exportedProcedureName);
 
-   __uint64_t offset=imp_name_table;
-   int index=0;
-   while(true){
-    __uint64_t slot=imp_addr_table+index;
-    unsigned int rva_to_name=0; // rva to {word hint, char*name}
-    if(!ReadProcessMemory(
-        proc,
-        (void*)(offset), // +index?
-        &rva_to_name.
-        sizeof(unsigned int),
-        NULL
-    ))
-        exit(1);
-    if(!rva_to_name)
-        break;
-    __uint64_t _hint=imageBase_imports+rva_to_name; // {word,char*}
-    WORD hint=0; // useful in export
-    ReadProcessMemory(
-        proc,
-        (void*)_hint,
-        &hint,
-        sizeof(WORD),
-        NULL
-    );
-    if(!hint)
-        exit(1);
-    __uint64_t _name=imageBase_imports+rva_to_name+sizeof(WORD);
-    char nameStr[128];
-    ReadRemoteString(proc,_name,nameStr);
-    
-  __uint64_t __exp_func_name_rva=functionNamesList+hint; // ls of rvas
-  __uint64_t exp_func_name_rva=0;
-  ReadProcessMemory(
-    proc,
-    (void*)__exp_func_name_rva,
-    &exp_func_name_rva,
-    sizeof(DWORD),
-    NULL
-  );
+            // resolved
+        }
 
-  __uint64_t targFuncNameBaseRemote=imageBase+exp_func_name_rva;
-  char targetFuncName[128];
-  ReadRemoteString(proc,targFuncNameBaseRemote,targetFuncName);
-
-  if(strcmp(nameStr,targetFuncName)!=0)
-    return false;
-
-  
-  WORD indexToAddrList=0;
-  ReadProcessMemory(
-    proc,
-    (void*)(ordinalsNameList+hint),
-    &indexToAddrList,
-    sizeof(WORD),
-    NULL
-  );
-
-  DWORD funcAddrRva=0;
-  ReadProcessMemory(
-    proc,
-    (void*)(functionsAddrList+indexToAddrList),
-    &funcAddrRva,
-    sizeof(DWORD),
-    NULL
-);
-  __uint64_t funcAddr=0;
-  ReadProcessMemory(
-    proc,
-    (void*)(imageBase+funcAddrRva),
-    &funcAddr,
-    sizeof(unsigned long long),
-    NULL
-  );
-
-  if(!funcAddr || !funcAddrRva || !indexToAddrList){
-    printf("[-] 305\n");
-    exit(1);
-  }
-
-  WriteProcessMemory(
-    proc,
-    (void*)slot,
-    &funcAddr,
-    sizeof(unsigned long long),
-    NULL
-  );
-    
-  printf("resolved function %s\n",nameStr);
-
-  offset+=sizeof(DWORD);
-  index++;
+        lookup_index++;
+    }
 }
-   
-
-
-}
-
-
 
 void resolveVirtuals(
     HANDLE proc,
     __uint64_t imp_addr_table,
-    __uint64_t imp_name_table,
-    BYTE* imageBase,
-    DLL** injected_ls,
-    int injected_c
-){
+    __uint64_t imp_lookup_table,
+    BYTE *imageBase,
+    DLL **injected_ls,
+    int injected_c)
+{
 
-    for(int k=0;k<injected_c;k++){
-        char* dllName=injected_ls[k]->dll_name;
-        __uint64_t dll_base=injected_ls[k]->dll_base;
-        __uint64_t expDirBase=injected_ls[k]->exportDirBase;
-        
-
+    for (int k = 0; k < injected_c; k++)
+    {
+        __uint64_t dll_base = injected_ls[k]->dll_base;
+        __uint64_t expDirBase = injected_ls[k]->exportDirBase;
+        resolveCore(
+            proc,
+            dll_base,
+            (__uint64_t)imageBase,
+            imp_addr_table,
+            imp_lookup_table,
+            expDirBase);
     }
 }
