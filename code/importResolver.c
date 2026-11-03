@@ -5,6 +5,29 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+short binaryLookup(HANDLE proc, char *imported, __uint64_t ent, __uint64_t nameOrdinals, __uint64_t exporterDllBase, DWORD namesCount)
+{
+    __uint64_t st = ent;
+    __uint64_t point = 0;
+    DWORD rva = 0;
+    int index = 0;
+    while (1)
+    {
+        index++;
+        namesCount = (namesCount / 2);
+        point = st + (namesCount - 1) * sizeof(DWORD);
+        // if lower than point: end becomes point
+        // if highr thn point. st becomes point
+        rva = readRemMem(proc, point, sizeof(DWORD));
+        char exportedFunctionName[128];
+        ReadRemoteString(proc, exporterDllBase + rva, exportedFunctionName);
+        if (strcmp(imported, exportedFunctionName) < 0)
+            st = point;
+        else if (strcmp(imported, exportedFunctionName) == 0)
+            return (short)readRemMem(proc, nameOrdinals + index * sizeof(WORD), sizeof(WORD));
+    }
+}
+
 // works for both main PE and loaded DLLs
 extern void resolveIAT(HANDLE proc, PROCESS_BASIC_INFORMATION pinfo, BYTE *imageBase, DLL **loadedDlls, size_t *count, char *resolvingFor)
 {
@@ -154,7 +177,7 @@ void resolveCore(
     __uint64_t eat = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 28, sizeof(DWORD));
     __uint64_t ent = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 32, sizeof(DWORD));
     __uint64_t nameOrdinals = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 36, sizeof(DWORD));
-
+    char *ent_localSliceBuff = sliceBuffer(proc, ent, 512);
     int lookup_index = 0;
     while (1)
     {
@@ -223,29 +246,19 @@ void resolveCore(
                     exp_lookup_index = hint;
             }
 
-            if (!exp_lookup_index)
-                for (DWORD i = 0; i < numberOfNames; i++)
-                {
-                    nameRva = (DWORD)readRemMem(proc, ent + i * sizeof(DWORD), sizeof(DWORD));
-                    // read remote string requires update
-                    ReadRemoteString(proc, exporterDllBase + nameRva, exportedProcedureName);
-                    // in consideration: forwarded chain case
-                    printf("%s vadareb exported %s\n", importedProcedureName, exportedProcedureName);
-                    // switch to binary comparison
-                    if (strcasecmp(importedProcedureName, exportedProcedureName) != 0)
-                        continue;
-                    exp_lookup_index = i;
-                    break;
-                }
-
+            int ordinal = -1;
             if (!exp_lookup_index)
             {
-                // if working on list of dlls and dll is not last ignore
-                // if last or only one, throw error
-                printf("resolve does not exist for %s\n", importedProcedureName);
-                // break;
+                ordinal = binaryLookup(proc, importedProcedureName, ent, nameOrdinals, exporterDllBase, numberOfNames);
+                if (ordinal == -1)
+                {
+                    // if working on list of dlls and dll is not last ignore
+                    // if last or only one, throw error
+                    printf("resolve does not exist for %s\n", importedProcedureName);
+                    // break;
+                }
             }
-            WORD ordinal = (WORD)readRemMem(proc, nameOrdinals + exp_lookup_index * sizeof(WORD), sizeof(WORD));
+
             DWORD func_rva = (DWORD)readRemMem(proc, eat + ordinal * sizeof(DWORD), sizeof(DWORD));
             __uint64_t func_abs = exporterDllBase + func_rva;
             if (!WriteProcessMemory(
