@@ -40,7 +40,6 @@ extern __uint64_t injectDLL(
 
     if (hDll == INVALID_HANDLE_VALUE)
     { // vergiliusproject.com
-        printf("file  does not exist on disk so calling extractMapping4VirtualDll()\n");
         int mappedDLLsCount = 0;
         char **realDllsList = extractMapping4VirtualDll(proc, pinfo, dll, &mappedDLLsCount);
         if (!mappedDLLsCount)
@@ -95,18 +94,15 @@ extern __uint64_t injectDLL(
         if (dllBase)
             printf("DLL: %s has been mapped successfully!/n", dll);
 
-        // if (dll_relloc)
-        //     rellocate(proc, dllBase, (void *)dll_mm.heapBase, (void *)dll_mm.preferedBase, dll_relloc);
+        if (dll_relloc)
+            rellocate(proc, dllBase, (void *)dll_mm.heapBase, (void *)dll_mm.preferedBase, dll_relloc);
 
-        printf("updated loaded dll list:\n");
         // till this point works.
         // -> heap
         IMAGE_DATA_DIRECTORY *ded = (IMAGE_DATA_DIRECTORY *)(dll_mm.dataDirectoryList + IMAGE_DIRECTORY_ENTRY_EXPORT * 8);
         __uint64_t exportDirBase = (__uint64_t)((__uint64_t)dllBase + ded->VirtualAddress);
 
         syncLoadedDlls(dll, (__uint64_t)dllBase, exportDirBase, loadedDlls, count);
-        dumpLoadedDlls(*loadedDlls, count);
-        printf("is about to resolve IAT!\n");
         resolveIAT(proc, pinfo, dllBase, loadedDlls, count, dll);
         ++(*injectedC);
 

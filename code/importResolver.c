@@ -5,27 +5,31 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+// needs anlyzing
 short binaryLookup(HANDLE proc, char *imported, __uint64_t ent, __uint64_t nameOrdinals, __uint64_t exporterDllBase, DWORD namesCount)
 {
-    __uint64_t st = ent;
-    __uint64_t point = 0;
-    DWORD rva = 0;
-    int index = 0;
-    while (1)
+    __uint64_t beg = ent;
+    __uint64_t end = ent + (namesCount - 1) * sizeof(DWORD);
+    while (beg <= end)
     {
-        index++;
-        namesCount = (namesCount / 2);
-        point = st + (namesCount - 1) * sizeof(DWORD);
-        // if lower than point: end becomes point
-        // if highr thn point. st becomes point
-        rva = readRemMem(proc, point, sizeof(DWORD));
+        namesCount = ((end - beg) / sizeof(DWORD)) / 2;
+        __uint64_t tmp = beg + namesCount * sizeof(DWORD);
+        DWORD rva = readRemMem(proc, tmp, sizeof(DWORD));
         char exportedFunctionName[128];
         ReadRemoteString(proc, exporterDllBase + rva, exportedFunctionName);
-        if (strcmp(imported, exportedFunctionName) < 0)
-            st = point;
-        else if (strcmp(imported, exportedFunctionName) == 0)
-            return (short)readRemMem(proc, nameOrdinals + index * sizeof(WORD), sizeof(WORD));
+        int comparison = strcmp(imported, exportedFunctionName);
+        if (comparison < 0)
+        {
+            end = tmp - sizeof(DWORD);
+        }
+        else if (comparison > 0)
+        {
+            beg = tmp + sizeof(DWORD);
+        }
+        else if (comparison == 0)
+            return (short)readRemMem(proc, nameOrdinals + (namesCount - 1) * sizeof(WORD), sizeof(WORD));
     }
+    return -1;
 }
 
 // works for both main PE and loaded DLLs
@@ -177,11 +181,9 @@ void resolveCore(
     __uint64_t eat = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 28, sizeof(DWORD));
     __uint64_t ent = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 32, sizeof(DWORD));
     __uint64_t nameOrdinals = exporterDllBase + (DWORD)readRemMem(proc, exportDirectory + 36, sizeof(DWORD));
-    char *ent_localSliceBuff = sliceBuffer(proc, ent, 512);
     int lookup_index = 0;
     while (1)
     {
-        printf("resolve core executing!\n");
         __uint64_t imp_slot = imp_addr_table + lookup_index * sizeof(unsigned long long);
         long long lookup_entry = 0;
         ReadProcessMemory(
@@ -193,7 +195,6 @@ void resolveCore(
 
         if (!lookup_entry)
         {
-            printf("look up entry value: %ll\n", lookup_entry);
             break;
         }
         // checking look up type: by name or by ordinal
@@ -225,14 +226,12 @@ void resolveCore(
         {
             // by name
             // rva to {word hint,dword name}
-            printf("resolving by name\n");
             DWORD rva = (DWORD)(lookup_entry & 0xFFFFFFFFULL);
             __uint64_t imp_by_name_obj = importerDllBase + rva; // {word hint,char* name};
             // hint is optimiztation for lookup / index n exp_name_table
             WORD hint = (WORD)readRemMem(proc, (__uint64_t)imp_by_name_obj, sizeof(WORD));
             char importedProcedureName[128] = {0};
             ReadRemoteString(proc, (__uint64_t)(imp_by_name_obj + 2), importedProcedureName);
-            printf("[RESOLVING!] WORKING TO RESOLVE IMPORTED FUNCTION: %s\n", importedProcedureName);
             // first try resolving by hint. if not then by name. later implement imp by forwarder handler
             DWORD nameRva = 0;
             char exportedProcedureName[128] = {0};
@@ -241,7 +240,6 @@ void resolveCore(
             {
                 nameRva = (DWORD)readRemMem(proc, ent + hint * sizeof(DWORD), sizeof(DWORD));
                 ReadRemoteString(proc, exporterDllBase + nameRva, exportedProcedureName);
-                printf("vadareb by HINT: %s -- %s\n", importedProcedureName, exportedProcedureName);
                 if (strcasecmp(importedProcedureName, exportedProcedureName) == 0)
                     exp_lookup_index = hint;
             }
@@ -271,9 +269,8 @@ void resolveCore(
                 printf("FAILED TO RESOLVE, ERROR CODE: %llu\n", GetLastError());
                 exit(1);
             }
-            printf("FUNCTION: %s has been resolved successfully. mapping is %s\n!", importedProcedureName, exportedProcedureName);
 
-            // resolved
+            printf("IMPORTED ---- Addr: %s --- %p\n", importedProcedureName, imp_slot);
         }
 
         lookup_index++;

